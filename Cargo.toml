@@ -12,6 +12,7 @@ members = [
     "scanner",
 
     "exporter",
+    "dv2ruffle",
     "exporter/integration_tests",
 
     "frontend-utils",

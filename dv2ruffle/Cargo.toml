@@ -1,0 +1,18 @@
+[package]
+name = "dv2ruffle"
+edition.workspace = true
+homepage.workspace = true
+license.workspace = true
+repository.workspace = true
+version.workspace = true
+
+[lints]
+workspace = true
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+futures = { workspace = true }
+ruffle_core = { path = "../core", features = ["default_font"] }
+ruffle_render_wgpu = { path = "../render/wgpu" }
