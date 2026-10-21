@@ -2535,6 +2535,38 @@ impl Player {
         })
     }
 
+    pub fn invoke(&mut self, method: &str, args: Vec<ExternalValue>) -> ExternalValue {
+        self.mutate_with_update_context(|context| {
+            let Some(root) = context.stage.root_clip() else {
+                return ExternalValue::Null;
+            };
+            let Some(this) = root.object1() else {
+                return ExternalValue::Null;
+            };
+            let mut activation = crate::avm1::Activation::from_nothing(
+                context,
+                crate::avm1::ActivationIdentifier::root("[Invoke]"),
+                root,
+            );
+            let args: Vec<_> = args
+                .into_iter()
+                .map(|v| v.into_avm1(&mut activation))
+                .collect();
+            let name = crate::string::AvmString::new_utf8(activation.gc(), method);
+            match this.call_method(
+                name,
+                &args,
+                &mut activation,
+                crate::avm1::ExecutionReason::FunctionCall,
+            ) {
+                Ok(v) => {
+                    ExternalValue::from_avm1(&mut activation, v).unwrap_or(ExternalValue::Null)
+                }
+                Err(_) => ExternalValue::Null,
+            }
+        })
+    }
+
     pub fn spoofed_url(&self) -> Option<&str> {
         self.spoofed_url.as_deref()
     }
