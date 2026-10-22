@@ -603,6 +603,9 @@ pub enum Tag<'a> {
 
     ProductInfo(ProductInfo),
 
+    ExporterInfo(ExporterInfo<'a>),
+    DefineExternalImage(DefineExternalImage<'a>),
+    DefineExternalGradientImage(DefineExternalGradientImage<'a>),
     Unknown {
         tag_code: u16,
         data: &'a [u8],
@@ -1697,6 +1700,33 @@ impl TextGridFit {
     pub fn from_u8(n: u8) -> Option<Self> {
         num_traits::FromPrimitive::from_u8(n)
     }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExporterInfo<'a> {
+    pub version: u16,
+    pub flags: u32,
+    pub bitmap_format: u16,
+    pub prefix: &'a SwfStr,
+    pub swf_name: &'a SwfStr,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DefineExternalImage<'a> {
+    pub id: CharacterId,
+    pub format: u16,
+    pub width: u16,
+    pub height: u16,
+    pub export_name: &'a SwfStr,
+    pub file_name: &'a SwfStr,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DefineExternalGradientImage<'a> {
+    pub id: u16,
+    pub format: u16,
+    pub size: u16,
+    pub file_name: &'a SwfStr,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

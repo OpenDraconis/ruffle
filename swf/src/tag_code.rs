@@ -86,6 +86,10 @@ pub enum TagCode {
 
     EnableTelemetry = 93,
     PlaceObject4 = 94,
+
+    ExporterInfo = 1000,
+    DefineExternalImage = 1001,
+    DefineExternalGradientImage = 1003,
 }
 
 impl TagCode {

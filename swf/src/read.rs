@@ -542,6 +542,14 @@ impl<'a> Reader<'a> {
                 Tag::DefineBitsLossless(tag_reader.read_define_bits_lossless(2)?)
             }
 
+            TagCode::ExporterInfo => Tag::ExporterInfo(tag_reader.read_exporter_info()?),
+            TagCode::DefineExternalImage => {
+                Tag::DefineExternalImage(tag_reader.read_define_external_image()?)
+            }
+            TagCode::DefineExternalGradientImage => {
+                Tag::DefineExternalGradientImage(tag_reader.read_define_external_gradient_image()?)
+            }
+
             TagCode::DefineScalingGrid => Tag::DefineScalingGrid {
                 id: tag_reader.read_u16()?,
                 splitter_rect: tag_reader.read_rectangle()?,
@@ -2511,6 +2519,43 @@ impl<'a> Reader<'a> {
             deblocking,
             data,
             alpha_data,
+        })
+    }
+
+    // GFxExporterInfoImpl::ReadExporterInfoTag @eb17c0 decomp
+    pub fn read_exporter_info(&mut self) -> Result<ExporterInfo<'a>> {
+        let version = self.read_u16()?;
+        let flags = if version >= 0x10a { self.read_u32()? } else { 0 };
+        Ok(ExporterInfo {
+            version,
+            flags,
+            bitmap_format: self.read_u16()?,
+            prefix: self.read_str_with_len()?,
+            swf_name: self.read_str_with_len()?,
+        })
+    }
+
+    // GFx_DefineExternalImageLoader @ebf8c0 decomp
+    pub fn read_define_external_image(&mut self) -> Result<DefineExternalImage<'a>> {
+        Ok(DefineExternalImage {
+            id: self.read_u16()?,
+            format: self.read_u16()?,
+            width: self.read_u16()?,
+            height: self.read_u16()?,
+            export_name: self.read_str_with_len()?,
+            file_name: self.read_str_with_len()?,
+        })
+    }
+
+    // GFx_DefineExternalGradientImageLoader @ebfa80 decomp
+    pub fn read_define_external_gradient_image(
+        &mut self,
+    ) -> Result<DefineExternalGradientImage<'a>> {
+        Ok(DefineExternalGradientImage {
+            id: self.read_u16()?,
+            format: self.read_u16()?,
+            size: self.read_u16()?,
+            file_name: self.read_str_with_len()?,
         })
     }
 

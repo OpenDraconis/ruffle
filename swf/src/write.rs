@@ -913,6 +913,48 @@ impl<W: Write> Writer<W> {
             Tag::ProductInfo(ref product_info) => self.write_product_info(product_info)?,
             Tag::DebugId(ref debug_id) => self.write_debug_id(debug_id)?,
             Tag::NameCharacter(ref name_character) => self.write_name_character(name_character)?,
+            Tag::ExporterInfo(ref info) => {
+                let mut body = Vec::new();
+                body.extend(info.version.to_le_bytes());
+                if info.version >= 0x10a {
+                    body.extend(info.flags.to_le_bytes());
+                }
+                body.extend(info.bitmap_format.to_le_bytes());
+                for text in [info.prefix, info.swf_name] {
+                    body.push(text.len() as u8);
+                    body.extend(text.as_bytes());
+                }
+                self.write_tag_code_and_length(TagCode::ExporterInfo as u16, body.len() as u32)?;
+                self.output.write_all(&body)?;
+            }
+            Tag::DefineExternalImage(ref image) => {
+                let mut body = Vec::new();
+                for value in [image.id, image.format, image.width, image.height] {
+                    body.extend(value.to_le_bytes());
+                }
+                for text in [image.export_name, image.file_name] {
+                    body.push(text.len() as u8);
+                    body.extend(text.as_bytes());
+                }
+                self.write_tag_code_and_length(
+                    TagCode::DefineExternalImage as u16,
+                    body.len() as u32,
+                )?;
+                self.output.write_all(&body)?;
+            }
+            Tag::DefineExternalGradientImage(ref image) => {
+                let mut body = Vec::new();
+                for value in [image.id, image.format, image.size] {
+                    body.extend(value.to_le_bytes());
+                }
+                body.push(image.file_name.len() as u8);
+                body.extend(image.file_name.as_bytes());
+                self.write_tag_code_and_length(
+                    TagCode::DefineExternalGradientImage as u16,
+                    body.len() as u32,
+                )?;
+                self.output.write_all(&body)?;
+            }
             Tag::Unknown { tag_code, data } => {
                 self.write_tag_code_and_length(tag_code, data.len() as u32)?;
                 self.output.write_all(data)?;
