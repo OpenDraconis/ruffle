@@ -1,3 +1,4 @@
+mod images;
 mod unity;
 
 use std::any::Any;
@@ -113,9 +114,10 @@ pub unsafe extern "C" fn dv2r_open_on_unity(path: *const c_char) -> *mut Movie {
     let Some(descriptors) = unity::gpu() else {
         return std::ptr::null_mut();
     };
-    let Ok(renderer) = WgpuRenderBackend::new(descriptors, unity::UnityTarget) else {
+    let Ok(mut renderer) = WgpuRenderBackend::new(descriptors.clone(), unity::UnityTarget) else {
         return std::ptr::null_mut();
     };
+    renderer.set_external_images(Arc::new(images::Images(descriptors, Default::default())));
     build(path, 1, 1, Box::new(renderer))
 }
 
@@ -140,9 +142,10 @@ pub unsafe extern "C" fn dv2r_open(path: *const c_char, width: u32, height: u32)
     let Ok(target) = TextureTarget::new(&descriptors.device, (width, height)) else {
         return std::ptr::null_mut();
     };
-    let Ok(renderer) = WgpuRenderBackend::new(descriptors, target) else {
+    let Ok(mut renderer) = WgpuRenderBackend::new(descriptors.clone(), target) else {
         return std::ptr::null_mut();
     };
+    renderer.set_external_images(Arc::new(images::Images(descriptors, Default::default())));
     build(path, width, height, Box::new(renderer))
 }
 
