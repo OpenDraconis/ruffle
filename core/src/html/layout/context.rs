@@ -17,7 +17,7 @@ pub trait LayoutContext<'gc> {
         is_bold: bool,
         is_italic: bool,
         movie: Option<SwfMovie<'gc>>,
-    ) -> Option<Font<'gc>>;
+    ) -> Option<(Font<'gc>, u8)>;
 
     /// Returns the default font implementations behind a built-in name.
     fn default_font(&mut self, name: DefaultFont, is_bold: bool, is_italic: bool)
@@ -45,9 +45,9 @@ impl<'gc> LayoutContext<'gc> for UpdateContext<'gc> {
         is_bold: bool,
         is_italic: bool,
         movie: Option<SwfMovie<'gc>>,
-    ) -> Option<Font<'gc>> {
+    ) -> Option<(Font<'gc>, u8)> {
         self.library
-            .get_embedded_font_by_name(name, font_type, is_bold, is_italic, movie)
+            .get_embedded_font_faux(name, font_type, is_bold, is_italic, movie)
     }
 
     fn default_font(
@@ -96,9 +96,9 @@ impl<'gc> LayoutContext<'gc> for RenderContext<'_, 'gc> {
         is_bold: bool,
         is_italic: bool,
         movie: Option<SwfMovie<'gc>>,
-    ) -> Option<Font<'gc>> {
+    ) -> Option<(Font<'gc>, u8)> {
         self.library
-            .get_embedded_font_by_name(name, font_type, is_bold, is_italic, movie)
+            .get_embedded_font_faux(name, font_type, is_bold, is_italic, movie)
     }
 
     fn default_font(

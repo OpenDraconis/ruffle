@@ -540,7 +540,7 @@ impl<'a, 'gc> LayoutBuilder<'a, 'gc> {
         // Note that the SWF can still contain a DefineFont tag with no glyphs/layout info in this case (see #451).
         // In an ideal world, device fonts would search for a matching font on the system and render it in some way.
         if self.font_type.is_embedded()
-            && let Some(font) = self
+            && let Some((font, faux)) = self
                 .context
                 .get_embedded_font_by_name(
                     &font_name,
@@ -549,9 +549,9 @@ impl<'a, 'gc> LayoutBuilder<'a, 'gc> {
                     span.style.italic,
                     Some(self.movie),
                 )
-                .filter(|f| f.has_glyphs())
+                .filter(|(f, _)| f.has_glyphs())
         {
-            return FontSet::from_one_font(self.context.gc(), font);
+            return FontSet::from_one_faux_font(self.context.gc(), font, faux);
         }
         // TODO: If set to use embedded fonts and we couldn't find any matching font, show nothing
         // However - at time of writing, we don't support DefineFont4. If we matched this behaviour,

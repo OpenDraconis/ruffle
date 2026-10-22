@@ -2292,6 +2292,36 @@ impl Player {
         }
     }
 
+    // CGFxPlayStreamManager::AddFontsFromMovie @1080560, GFxFontLib::AddFontsFrom @eb5bd0 decomp
+    pub fn add_fonts_from_movie(&mut self, data: &[u8]) -> Result<(), swf::error::Error> {
+        let buffer = swf::decompress_swf(data)?;
+        let parsed = swf::parse_swf(&buffer)?;
+        let encoding = swf::SwfStr::encoding_for_version(parsed.header.version());
+        self.mutate_with_update_context(|context| {
+            let mut fonts = Vec::new();
+            for tag in parsed.tags {
+                if let swf::Tag::DefineFont2(font) = tag {
+                    fonts.push(crate::font::Font::from_swf_tag(
+                        context.gc(),
+                        context.renderer,
+                        *font,
+                        encoding,
+                        crate::font::FontType::Embedded,
+                    ));
+                }
+            }
+            context.library.add_font_lib_fonts(fonts);
+        });
+        Ok(())
+    }
+
+    // CGFxPlayStreamManager::AddFontMapping @10804f0, GFxFontMap::MapFont @eb4e80 decomp
+    pub fn add_font_mapping(&mut self, font_id: &str, font_name: &str, flags: u8) -> bool {
+        self.mutate_with_update_context(|context| {
+            context.library.add_font_mapping(font_id, font_name, flags)
+        })
+    }
+
     /// Runs the closure `f` with an `UpdateContext`.
     /// This takes cares of populating the `UpdateContext` struct, avoiding borrow issues.
     pub fn mutate_with_update_context<F, R>(&mut self, f: F) -> R

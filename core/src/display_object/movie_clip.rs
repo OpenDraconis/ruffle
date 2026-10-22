@@ -779,6 +779,10 @@ impl<'gc> MovieClip<'gc> {
         }
 
         let mc = context.gc();
+        // GFxMovieBindProcess::BindNextFrame @ecf430, GFxMovieBindProcess::ResolveImportThroughFontLib @ecea20 decomp
+        let font_lib = context.library.uses_font_lib()
+            && asset_url.len() >= 14
+            && asset_url.to_lowercase().ends_with("gfxfontlib.swf");
         let library = context.library.library_for_movie_mut(self.movie());
 
         for asset in exported_assets {
@@ -787,7 +791,15 @@ impl<'gc> MovieClip<'gc> {
             let id = asset.id;
             tracing::debug!("Importing asset: {} (ID: {})", name, id);
 
+            if font_lib {
+                let font = Font::empty_font(mc, &name.to_utf8_lossy(), false, false, FontType::Embedded);
+                library.register_font_lib_import(id, font);
+            }
             library.register_import(name, id);
+        }
+
+        if font_lib {
+            return Ok(());
         }
 
         let request = Request::get(asset_url);

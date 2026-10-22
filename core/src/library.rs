@@ -221,6 +221,11 @@ impl<'gc> MovieLibrary<'gc> {
         self.imported_assets.insert(name, id);
     }
 
+    // GFxMovieBindProcess::ResolveImportThroughFontLib @ecea20 decomp
+    pub fn register_font_lib_import(&mut self, id: CharacterId, font: Font<'gc>) {
+        self.characters.insert(id, Character::Font(font));
+    }
+
     /// Instantiates the library item with the given character ID into a display object.
     /// The object must then be post-instantiated before being used.
     pub fn instantiate_by_id(
@@ -438,6 +443,11 @@ pub struct Library<'gc> {
     /// These should be checked before any Movie-specific library's own fonts.
     global_fonts: FontMap<'gc>,
 
+    #[collect(require_static)]
+    font_mappings: FnvHashMap<String, (String, u8)>,
+
+    font_lib: Option<Vec<Font<'gc>>>,
+
     /// A set of which fonts we've asked from the backend already, to help with negative caching.
     /// If we've asked for a specific font, record it here and don't ask again.
     font_lookup_cache: FnvHashSet<FontQuery>,
@@ -462,6 +472,8 @@ impl<'gc> Library<'gc> {
             movie_libraries: MovieLibraries::new(),
             device_fonts: Default::default(),
             global_fonts: Default::default(),
+            font_mappings: Default::default(),
+            font_lib: None,
             font_lookup_cache: Default::default(),
             font_sort_cache: Default::default(),
             default_font_names: Default::default(),
@@ -709,9 +721,22 @@ impl<'gc> Library<'gc> {
         is_italic: bool,
         movie: Option<SwfMovie<'gc>>,
     ) -> Option<Font<'gc>> {
+        self.get_embedded_font_faux(name, font_type, is_bold, is_italic, movie)
+            .map(|(font, _)| font)
+    }
+
+    // GFxFontManager::CreateFontHandleFromName @f7d830 decomp
+    pub fn get_embedded_font_faux(
+        &self,
+        name: &str,
+        font_type: FontType,
+        is_bold: bool,
+        is_italic: bool,
+        movie: Option<SwfMovie<'gc>>,
+    ) -> Option<(Font<'gc>, u8)> {
         let query = FontQuery::new(font_type, name.to_owned(), is_bold, is_italic);
         if let Some(font) = self.global_fonts.find(&query) {
-            return Some(font);
+            return Some((font, 0));
         }
         if let Some(movie) = movie
             && let Some(library) = self.library_for_movie(movie)
@@ -719,16 +744,59 @@ impl<'gc> Library<'gc> {
             if let Some((_, font)) = library.character_by_export_name(&WString::from_utf8(name)) {
                 // Exporting a font seems to override font lookup completely.
                 return if let Character::Font(font) = font {
-                    Some(font)
+                    Some((font, 0))
                 } else {
                     None
                 };
             }
             if let Some(font) = library.fonts.find(&query) {
-                return Some(font);
+                return Some((font, 0));
             }
         }
-        None
+        if let Some(font) = self.font_lib_font(name, is_bold, is_italic) {
+            return Some((font, 0));
+        }
+        if !is_bold && !is_italic {
+            return None;
+        }
+        let faux = if is_bold { crate::font::faux::FAUX_BOLD } else { 0 }
+            | if is_italic { crate::font::faux::FAUX_ITALIC } else { 0 };
+        self.font_lib_font(name, false, false).map(|font| (font, faux))
+    }
+
+    pub fn uses_font_lib(&self) -> bool {
+        self.font_lib.is_some()
+    }
+
+    // GFxFontLib::AddFontsFrom @eb5bd0, GFxLoadProcess::AddFontDataResource @ed2550 decomp
+    pub fn add_font_lib_fonts(&mut self, fonts: impl IntoIterator<Item = Font<'gc>>) {
+        self.font_lib.get_or_insert_with(Vec::new).extend(fonts);
+    }
+
+    // GFxFontMap::MapFont @eb4e80 decomp
+    pub fn add_font_mapping(&mut self, font_id: &str, font_name: &str, flags: u8) -> bool {
+        let key = font_id.to_lowercase();
+        if self.font_mappings.contains_key(&key) {
+            return false;
+        }
+        self.font_mappings.insert(key, (font_name.to_owned(), flags));
+        true
+    }
+
+    // GFxFontManager::FindOrCreateHandle @f7ced0, GFxFontMap::GetFontMapping @eb4ac0, GFxFontLib::FindFont @eb5930 decomp
+    fn font_lib_font(&self, name: &str, is_bold: bool, is_italic: bool) -> Option<Font<'gc>> {
+        let (name, is_bold, is_italic) = match self.font_mappings.get(&name.to_lowercase()) {
+            Some((mapped, 4)) => (mapped.as_str(), is_bold, is_italic),
+            Some((mapped, flags)) => (mapped.as_str(), flags & 2 != 0, flags & 1 != 0),
+            None => (name, is_bold, is_italic),
+        };
+        let name = name.to_lowercase();
+        self.font_lib.as_ref()?.iter().copied().find(|font| {
+            let descriptor = font.descriptor();
+            descriptor.lowercase_name() == name
+                && descriptor.bold() == is_bold
+                && descriptor.italic() == is_italic
+        })
     }
 
     pub fn global_fonts(&self) -> Vec<Font<'gc>> {
