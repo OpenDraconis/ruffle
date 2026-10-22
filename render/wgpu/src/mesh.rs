@@ -356,6 +356,7 @@ impl CommonGradient {
 #[derive(Debug, Clone)]
 pub struct BitmapBinds {
     pub bind_group: wgpu::BindGroup,
+    pub straight_alpha: bool,
 }
 
 impl BitmapBinds {
@@ -365,6 +366,7 @@ impl BitmapBinds {
         sampler: &wgpu::Sampler,
         texture_view: wgpu::TextureView,
         label: Option<String>,
+        straight_alpha: bool,
     ) -> Self {
         let bind_group = device.create_bind_group(&wgpu::BindGroupDescriptor {
             layout,
@@ -380,6 +382,9 @@ impl BitmapBinds {
             ],
             label: label.as_deref(),
         });
-        Self { bind_group }
+        Self {
+            bind_group,
+            straight_alpha,
+        }
     }
 }

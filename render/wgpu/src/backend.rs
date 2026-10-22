@@ -83,6 +83,11 @@ pub struct WgpuRenderBackend<T: RenderTarget> {
     chunk_buffers: ChunkBuffers,
     active_frame: ActiveFrame,
     profiler: GpuProfiler,
+    external_images: Option<Arc<dyn ExternalImages>>,
+}
+
+pub trait ExternalImages {
+    fn image(&self, url: &str) -> Option<(BitmapHandle, u32, u32)>;
 }
 
 impl WgpuRenderBackend<SwapChainTarget> {
@@ -280,7 +285,12 @@ impl<T: RenderTarget> WgpuRenderBackend<T> {
             chunk_buffers,
             active_frame,
             profiler,
+            external_images: None,
         })
+    }
+
+    pub fn set_external_images(&mut self, images: Arc<dyn ExternalImages>) {
+        self.external_images = Some(images);
     }
 
     fn register_shape_internal(
@@ -426,6 +436,10 @@ impl<T: RenderTarget> WgpuRenderBackend<T> {
 }
 
 impl<T: RenderTarget + 'static> RenderBackend for WgpuRenderBackend<T> {
+    fn external_image(&mut self, url: &str) -> Option<(BitmapHandle, u32, u32)> {
+        self.external_images.as_ref()?.image(url)
+    }
+
     fn set_viewport_dimensions(&mut self, dimensions: ViewportDimensions) {
         // Avoid panics from creating 0-sized framebuffers.
         // TODO: find a way to bubble an error when the size is too large
@@ -735,6 +749,9 @@ impl<T: RenderTarget + 'static> RenderBackend for WgpuRenderBackend<T> {
             clamped_linear: Default::default(),
             clamped_nearest: Default::default(),
             copy_count: Cell::new(0),
+            straight_alpha: false,
+            host: false,
+            forward: Default::default(),
         }));
 
         Ok(handle)
@@ -1014,6 +1031,9 @@ impl<T: RenderTarget + 'static> RenderBackend for WgpuRenderBackend<T> {
                     clamped_linear: Default::default(),
                     clamped_nearest: Default::default(),
                     copy_count: Cell::new(0),
+                    straight_alpha: false,
+                    host: false,
+                    forward: Default::default(),
                 }))
             }
         };
@@ -1175,6 +1195,9 @@ impl<T: RenderTarget + 'static> RenderBackend for WgpuRenderBackend<T> {
             clamped_linear: Default::default(),
             clamped_nearest: Default::default(),
             copy_count: Cell::new(0),
+            straight_alpha: false,
+            host: false,
+            forward: Default::default(),
         })))
     }
 

@@ -33,6 +33,7 @@ pub enum DrawCommand {
         binds: wgpu::BindGroup,
         blend_mode: TrivialBlend,
         render_stage3d: bool,
+        straight_alpha: bool,
         draw_offsets: DrawOffsets,
     },
     RenderAlphaMask {
@@ -100,6 +101,7 @@ impl DrawCommand {
                     binds: self_binds,
                     blend_mode: self_blend,
                     render_stage3d: self_stage3d,
+                    straight_alpha: self_straight,
                     draw_offsets: self_offsets,
                 },
                 DrawCommand::RenderTexture {
@@ -107,12 +109,14 @@ impl DrawCommand {
                     binds: other_binds,
                     blend_mode: other_blend,
                     render_stage3d: other_stage3d,
+                    straight_alpha: other_straight,
                     draw_offsets: other_offsets,
                 },
             ) if self_texture == other_texture
                 && self_binds == other_binds
                 && self_blend == other_blend
-                && self_stage3d == other_stage3d =>
+                && self_stage3d == other_stage3d
+                && self_straight == other_straight =>
             {
                 self_offsets.try_merge(other_offsets)
             }
@@ -186,11 +190,13 @@ impl<'encoder> CommandRenderer<'encoder> {
                 blend_mode,
                 draw_offsets,
                 render_stage3d,
+                straight_alpha,
             } => self.render_texture(
                 render_pass,
                 binds,
                 *blend_mode,
                 *render_stage3d,
+                *straight_alpha,
                 draw_offsets,
             ),
             DrawCommand::DrawColor { draw_offsets } => self.draw_color(render_pass, draw_offsets),
@@ -255,8 +261,14 @@ impl<'encoder> CommandRenderer<'encoder> {
         bind_group: &'encoder wgpu::BindGroup,
         blend_mode: TrivialBlend,
         render_stage3d: bool,
+        straight_alpha: bool,
         draw_offsets: &'encoder DrawOffsets,
     ) {
+        let bitmap = if straight_alpha {
+            &self.pipelines.bitmap_straight
+        } else {
+            &self.pipelines.bitmap
+        };
         match (self.needs_stencil, render_stage3d) {
             (true, true) => {
                 self.set_pipeline(render_pass, &self.pipelines.bitmap_opaque_dummy_stencil);
@@ -264,7 +276,7 @@ impl<'encoder> CommandRenderer<'encoder> {
             (true, false) => {
                 self.set_pipeline(
                     render_pass,
-                    self.pipelines.bitmap[blend_mode].pipeline_for(self.mask_state.mode),
+                    bitmap[blend_mode].pipeline_for(self.mask_state.mode),
                 );
             }
             (false, true) => {
@@ -273,7 +285,7 @@ impl<'encoder> CommandRenderer<'encoder> {
             (false, false) => {
                 self.set_pipeline(
                     render_pass,
-                    self.pipelines.bitmap[blend_mode].stencilless_pipeline(),
+                    bitmap[blend_mode].stencilless_pipeline(),
                 );
             }
         }

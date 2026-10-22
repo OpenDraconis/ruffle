@@ -264,9 +264,46 @@ pub struct Texture {
     clamped_linear: OnceCell<BitmapBinds>,
     clamped_nearest: OnceCell<BitmapBinds>,
     copy_count: Cell<u8>,
+    straight_alpha: bool,
+    host: bool,
+    forward: std::sync::OnceLock<BitmapHandle>,
 }
 
 impl Texture {
+    pub fn external(texture: wgpu::Texture, straight_alpha: bool) -> BitmapHandle {
+        BitmapHandle(std::sync::Arc::new(Texture {
+            view: texture.create_view(&Default::default()),
+            texture,
+            repeating_linear: Default::default(),
+            repeating_nearest: Default::default(),
+            clamped_linear: Default::default(),
+            clamped_nearest: Default::default(),
+            copy_count: Cell::new(0),
+            straight_alpha,
+            host: true,
+            forward: Default::default(),
+        }))
+    }
+
+    pub fn current(&self) -> &Texture {
+        match self.forward.get() {
+            Some(forward) => as_texture(forward).current(),
+            None => self,
+        }
+    }
+
+    pub fn host(&self) -> bool {
+        self.host
+    }
+
+    pub fn forward_to(&self, handle: BitmapHandle) {
+        let _ = self.forward.set(handle);
+    }
+
+    pub fn straight_alpha(&self) -> bool {
+        self.straight_alpha
+    }
+
     pub fn bind_group(
         &self,
         repeating: bool,
@@ -276,6 +313,16 @@ impl Texture {
         handle: BitmapHandle,
         samplers: &BitmapSamplers,
     ) -> &BitmapBinds {
+        if let Some(forward) = self.forward.get() {
+            return as_texture(forward).bind_group(
+                repeating,
+                smoothed,
+                device,
+                layout,
+                forward.clone(),
+                samplers,
+            );
+        }
         let bind = match (repeating, smoothed) {
             (true, true) => &self.repeating_linear,
             (true, false) => &self.repeating_nearest,
@@ -289,6 +336,7 @@ impl Texture {
                 samplers.get_sampler(repeating, smoothed),
                 self.view.clone(),
                 create_debug_label!("Bitmap {:?} bind group (smoothed: {})", handle.0, smoothed),
+                self.straight_alpha,
             )
         })
     }

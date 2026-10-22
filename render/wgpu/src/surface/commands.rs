@@ -283,6 +283,7 @@ impl CommandHandler for WgpuCommandHandler<'_, '_> {
                         draw_offsets,
                         blend_mode,
                         render_stage3d: false,
+                        straight_alpha: false,
                     },
                 );
             }
@@ -320,7 +321,7 @@ impl CommandHandler for WgpuCommandHandler<'_, '_> {
         pixel_snapping: PixelSnapping,
         region: PixelRegion,
     ) {
-        let texture = as_texture(&bitmap);
+        let texture = as_texture(&bitmap).current();
 
         pixel_snapping.apply(&mut transform.matrix);
         transform.matrix *= Matrix::scale(region.width() as f32, region.height() as f32);
@@ -343,15 +344,17 @@ impl CommandHandler for WgpuCommandHandler<'_, '_> {
             draw_offsets,
             blend_mode: TrivialBlend::Normal,
             render_stage3d: false,
+            straight_alpha: binds.straight_alpha,
         };
 
         let texture_width = texture.texture.width();
         let texture_height = texture.texture.height();
 
-        if region.x_min == 0
-            && region.y_min == 0
-            && region.width() == texture_width
-            && region.height() == texture_height
+        if texture.host()
+            || region.x_min == 0
+                && region.y_min == 0
+                && region.width() == texture_width
+                && region.height() == texture_height
         {
             // Special case "full texture" so that we can merge subsequent draw calls
             self.add_to_current(
@@ -413,6 +416,7 @@ impl CommandHandler for WgpuCommandHandler<'_, '_> {
                 blend_mode: TrivialBlend::Normal,
                 render_stage3d: true,
                 binds: binds.bind_group.clone(),
+                straight_alpha: false,
             },
         );
     }
@@ -460,6 +464,7 @@ impl CommandHandler for WgpuCommandHandler<'_, '_> {
                             binds: binds.bind_group.clone(),
                             blend_mode: TrivialBlend::Normal,
                             render_stage3d: false,
+                            straight_alpha: binds.straight_alpha,
                             draw_offsets,
                         }
                     });

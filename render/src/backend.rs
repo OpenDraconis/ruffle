@@ -94,6 +94,10 @@ pub trait RenderBackend: Any {
     ) -> Result<BitmapHandle, Error>;
 
     fn register_bitmap(&mut self, bitmap: Bitmap<'_>) -> Result<BitmapHandle, Error>;
+
+    fn external_image(&mut self, _url: &str) -> Option<(BitmapHandle, u32, u32)> {
+        None
+    }
     fn update_texture(
         &mut self,
         handle: &BitmapHandle,

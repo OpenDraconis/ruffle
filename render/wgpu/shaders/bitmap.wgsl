@@ -12,6 +12,7 @@ struct VertexOutput {
 @group(2) @binding(0) var texture: texture_2d<f32>;
 @group(2) @binding(1) var texture_sampler: sampler;
 override late_saturate: bool = false;
+override straight_alpha: bool = false;
 
 @vertex
 fn main_vertex(in: common__VertexInputUv, @builtin(instance_index) instanceIndex: u32) -> VertexOutput {
@@ -22,6 +23,10 @@ fn main_vertex(in: common__VertexInputUv, @builtin(instance_index) instanceIndex
 @fragment
 fn main_fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     var color: vec4<f32> = textureSample(texture, texture_sampler, in.uv);
+    if (straight_alpha) {
+        color = saturate(color * in.mult_color + in.add_color);
+        return vec4<f32>(color.rgb * color.a, color.a);
+    }
     // Texture is premultiplied by alpha.
     // Unmultiply alpha, apply color transform, remultiply alpha.
     if (color.a > 0.0) {

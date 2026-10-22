@@ -55,6 +55,7 @@ pub struct Pipelines {
     /// or use it in any way.
     pub bitmap_opaque_dummy_stencil: wgpu::RenderPipeline,
     pub bitmap: EnumMap<TrivialBlend, ShapePipeline>,
+    pub bitmap_straight: EnumMap<TrivialBlend, ShapePipeline>,
     pub gradients: ShapePipeline,
     pub complex_blends: EnumMap<ComplexBlend, ShapePipeline>,
     pub alpha_mask: ShapePipeline,
@@ -177,6 +178,22 @@ impl Pipelines {
             )
         });
 
+        let bitmap_straight_pipelines = EnumMap::from_fn(|blend: TrivialBlend| {
+            create_shape_pipeline_with(
+                &format!("Bitmap straight alpha ({blend:?})"),
+                device,
+                format,
+                &shaders.bitmap_shader,
+                msaa_sample_count,
+                &VERTEX_BUFFERS_DESCRIPTION_POS_UV,
+                &bitmap_blend_bindings,
+                blend.blend_state(),
+                0,
+                PrimitiveTopology::TriangleList,
+                &[("straight_alpha", 1.0)],
+            )
+        });
+
         let bitmap_opaque_pipeline_layout_label =
             create_debug_label!("Opaque bitmap pipeline layout");
         let bitmap_opaque_pipeline_layout =
@@ -254,6 +271,7 @@ impl Pipelines {
             color: color_pipelines,
             lines: lines_pipelines,
             bitmap: bitmap_pipelines,
+            bitmap_straight: bitmap_straight_pipelines,
             bitmap_opaque,
             bitmap_opaque_dummy_stencil: bitmap_opaque_dummy_depth,
             gradients: gradient_pipeline,
@@ -333,6 +351,35 @@ fn create_shape_pipeline(
     immediate_size: u32,
     primitive_topology: PrimitiveTopology,
 ) -> ShapePipeline {
+    create_shape_pipeline_with(
+        name,
+        device,
+        format,
+        shader,
+        msaa_sample_count,
+        vertex_buffers_layout,
+        bind_group_layouts,
+        blend,
+        immediate_size,
+        primitive_topology,
+        &[],
+    )
+}
+
+#[expect(clippy::too_many_arguments)]
+fn create_shape_pipeline_with(
+    name: &str,
+    device: &wgpu::Device,
+    format: wgpu::TextureFormat,
+    shader: &wgpu::ShaderModule,
+    msaa_sample_count: u32,
+    vertex_buffers_layout: &[Option<wgpu::VertexBufferLayout<'_>>],
+    bind_group_layouts: &[Option<&wgpu::BindGroupLayout>],
+    blend: BlendState,
+    immediate_size: u32,
+    primitive_topology: PrimitiveTopology,
+    fragment_constants: &[(&str, f64)],
+) -> ShapePipeline {
     let pipeline_layout_label = create_debug_label!("{} shape pipeline layout", name);
     let pipeline_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
         label: pipeline_layout_label.as_deref(),
@@ -365,7 +412,7 @@ fn create_shape_pipeline(
             })],
             vertex_buffers_layout,
             msaa_sample_count,
-            &[],
+            fragment_constants,
             primitive_topology,
         ))
     };
@@ -384,7 +431,7 @@ fn create_shape_pipeline(
             })],
             vertex_buffers_layout,
             msaa_sample_count,
-            &[],
+            fragment_constants,
             primitive_topology,
         )),
         |mask_mode| match mask_mode {
