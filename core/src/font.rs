@@ -1,4 +1,5 @@
 mod atlas;
+pub mod faux;
 mod font_descriptor;
 mod font_face;
 mod font_like;

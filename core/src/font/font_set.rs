@@ -20,6 +20,7 @@ pub struct FontSet<'gc>(Gc<'gc, FontSetData<'gc>>);
 struct FontSetData<'gc> {
     main_font: Font<'gc>,
     fallback_fonts: Vec<Font<'gc>>,
+    faux: u8,
 }
 
 impl<'gc> FontSet<'gc> {
@@ -35,19 +36,30 @@ impl<'gc> FontSet<'gc> {
             FontSetData {
                 main_font,
                 fallback_fonts: fallback_fonts.to_vec(),
+                faux: 0,
             },
         )))
     }
 
     /// Creates a font set from one font only.
     pub fn from_one_font(mc: &Mutation<'gc>, font: Font<'gc>) -> Self {
+        Self::from_one_faux_font(mc, font, 0)
+    }
+
+    // GFxFontManager::CreateFontHandleFromName @f7d830 decomp
+    pub fn from_one_faux_font(mc: &Mutation<'gc>, font: Font<'gc>, faux: u8) -> Self {
         Self(Gc::new(
             mc,
             FontSetData {
                 main_font: font,
                 fallback_fonts: vec![],
+                faux,
             },
         ))
+    }
+
+    pub fn faux(self) -> u8 {
+        self.0.faux
     }
 
     pub fn main_font(self) -> Font<'gc> {

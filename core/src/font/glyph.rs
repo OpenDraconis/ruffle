@@ -14,6 +14,7 @@ enum SwfGlyphOrShape {
         shape: swf::Shape,
         // Handle to registered shape, loaded lazily on first render of this glyph.
         handle: Option<ShapeHandle>,
+        faux: [Option<ShapeHandle>; 3],
     },
     Poisoned,
 }
@@ -26,13 +27,28 @@ impl SwfGlyphOrShape {
             *self = Self::Shape {
                 shape: ruffle_render::shape_utils::swf_glyph_to_shape(glyph),
                 handle: None,
+                faux: Default::default(),
             };
         }
 
         match self {
-            SwfGlyphOrShape::Shape { shape, handle } => (shape, handle),
+            SwfGlyphOrShape::Shape { shape, handle, .. } => (shape, handle),
             _ => unreachable!(),
         }
+    }
+
+    // VectorGlyphKey::VectorGlyphKey @ee9da0, GFxFontCacheManagerImpl::GetGlyphShape_NoLock @eef7a0 decomp
+    fn faux_handle(&mut self, renderer: &mut dyn RenderBackend, faux: u8, units_per_em: f32) -> ShapeHandle {
+        self.shape();
+        let SwfGlyphOrShape::Shape { shape, faux: handles, .. } = self else {
+            unreachable!()
+        };
+        handles[faux as usize - 1]
+            .get_or_insert_with(|| {
+                let shape = super::faux::faux_shape(shape, faux, units_per_em);
+                renderer.register_shape((&shape).into(), &NullBitmapSource)
+            })
+            .clone()
     }
 }
 
@@ -185,7 +201,22 @@ impl Glyph {
     }
 
     pub fn render<'gc>(&self, context: &mut RenderContext<'_, 'gc>) {
+        self.render_faux(context, 0, 1.0);
+    }
+
+    // GFxTextLineBuffer::Display @f93c00, GFxFontCacheManagerImpl::fillBatchPackage @eefd50 decomp
+    pub fn render_faux<'gc>(&self, context: &mut RenderContext<'_, 'gc>, faux: u8, units_per_em: f32) {
         use ruffle_render::commands::CommandHandler;
+
+        if faux != 0
+            && let GlyphShape::Swf(glyph) = &self.shape
+        {
+            let handle = glyph.borrow_mut().faux_handle(context.renderer, faux, units_per_em);
+            context
+                .commands
+                .render_shape(handle, context.transform_stack.transform());
+            return;
+        }
 
         let Some(render_data) = self.glyph_render_data(context.renderer) else {
             return;

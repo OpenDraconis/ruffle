@@ -1288,7 +1288,7 @@ impl<'gc> EditText<'gc> {
                         } else {
                             context.transform_stack.push(transform);
                         }
-                        glyph.render(context);
+                        glyph.render_faux(context, font.faux(), font.main_font().scale());
                         context.transform_stack.pop();
                     }
 
