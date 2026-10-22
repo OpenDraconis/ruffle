@@ -1,3 +1,4 @@
+mod fonts;
 mod images;
 mod unity;
 
@@ -97,6 +98,7 @@ fn build(
         .with_viewport_dimensions(width, height, 1.0)
         .build();
     player.lock().unwrap().set_window_mode("transparent");
+    fonts::install(&mut player.lock().unwrap());
     Box::into_raw(Box::new(Movie {
         player,
         executor,

@@ -58,7 +58,7 @@ fn read(url: &str) -> Option<Vec<u8>> {
     read_path(&path.to_string_lossy())
 }
 
-fn read_path(path: &str) -> Option<Vec<u8>> {
+pub(crate) fn read_path(path: &str) -> Option<Vec<u8>> {
     let path = CString::new(path).ok()?;
     let (open, free) = (*OPENER.lock().unwrap())?;
     let mut length = 0;
