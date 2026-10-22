@@ -1,3 +1,5 @@
+mod unity;
+
 use std::any::Any;
 use std::collections::VecDeque;
 use std::ffi::{CStr, c_char};
@@ -11,7 +13,7 @@ use ruffle_core::events::{MouseButton, PlayerEvent};
 use ruffle_core::external::{FsCommandProvider, Value};
 use ruffle_core::limits::ExecutionLimit;
 use ruffle_core::tag_utils::movie_from_path;
-use ruffle_core::{FloatDuration, Player, PlayerBuilder};
+use ruffle_core::{FloatDuration, Player, PlayerBuilder, ViewportDimensions};
 use ruffle_render_wgpu::backend::{
     WgpuRenderBackend, create_wgpu_instance, request_adapter_and_device,
 };
@@ -49,6 +51,72 @@ pub struct Movie {
     width: u32,
     height: u32,
     pub last_render_ms: f32,
+    frame: Option<(u32, u32, wgpu::TextureFormat)>,
+}
+
+impl Movie {
+    fn render_into_frame(&mut self, width: u32, height: u32, format: wgpu::TextureFormat) {
+        let mut p = self.player.lock().unwrap();
+        if self.frame != Some((width, height, format)) {
+            self.frame = Some((width, height, format));
+            self.width = width;
+            self.height = height;
+            p.set_viewport_dimensions(ViewportDimensions {
+                width,
+                height,
+                scale_factor: 1.0,
+            });
+        }
+        p.render();
+    }
+}
+
+fn build(
+    path: PathBuf,
+    width: u32,
+    height: u32,
+    renderer: Box<dyn ruffle_render::backend::RenderBackend>,
+) -> *mut Movie {
+    let Ok(movie) = movie_from_path(&path, None) else {
+        return std::ptr::null_mut();
+    };
+    let executor = NullExecutor::new();
+    let Ok(navigator) = NullNavigatorBackend::with_base_path(path.parent().unwrap(), &executor)
+    else {
+        return std::ptr::null_mut();
+    };
+    let events: Queue = Default::default();
+    let player = PlayerBuilder::new()
+        .with_boxed_renderer(renderer)
+        .with_navigator(navigator)
+        .with_log(Log(events.clone()))
+        .with_fs_commands(Box::new(Fs(events.clone())))
+        .with_movie(movie)
+        .with_autoplay(true)
+        .with_viewport_dimensions(width, height, 1.0)
+        .build();
+    player.lock().unwrap().set_window_mode("transparent");
+    Box::into_raw(Box::new(Movie {
+        player,
+        executor,
+        events,
+        width,
+        height,
+        last_render_ms: 0.0,
+        frame: None,
+    }))
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dv2r_open_on_unity(path: *const c_char) -> *mut Movie {
+    let path = PathBuf::from(unsafe { text(path) });
+    let Some(descriptors) = unity::gpu() else {
+        return std::ptr::null_mut();
+    };
+    let Ok(renderer) = WgpuRenderBackend::new(descriptors, unity::UnityTarget) else {
+        return std::ptr::null_mut();
+    };
+    build(path, 1, 1, Box::new(renderer))
 }
 
 unsafe fn text(p: *const c_char) -> String {
@@ -69,39 +137,13 @@ pub unsafe extern "C" fn dv2r_open(path: *const c_char, width: u32, height: u32)
         return std::ptr::null_mut();
     };
     let descriptors = Arc::new(Descriptors::new(instance, adapter, device, queue));
-    let Ok(movie) = movie_from_path(&path, None) else {
-        return std::ptr::null_mut();
-    };
     let Ok(target) = TextureTarget::new(&descriptors.device, (width, height)) else {
         return std::ptr::null_mut();
     };
     let Ok(renderer) = WgpuRenderBackend::new(descriptors, target) else {
         return std::ptr::null_mut();
     };
-    let executor = NullExecutor::new();
-    let Ok(navigator) = NullNavigatorBackend::with_base_path(path.parent().unwrap(), &executor)
-    else {
-        return std::ptr::null_mut();
-    };
-    let events: Queue = Default::default();
-    let player = PlayerBuilder::new()
-        .with_renderer(renderer)
-        .with_navigator(navigator)
-        .with_log(Log(events.clone()))
-        .with_fs_commands(Box::new(Fs(events.clone())))
-        .with_movie(movie)
-        .with_autoplay(true)
-        .with_viewport_dimensions(width, height, 1.0)
-        .build();
-    player.lock().unwrap().set_window_mode("transparent");
-    Box::into_raw(Box::new(Movie {
-        player,
-        executor,
-        events,
-        width,
-        height,
-        last_render_ms: 0.0,
-    }))
+    build(path, width, height, Box::new(renderer))
 }
 
 #[unsafe(no_mangle)]
