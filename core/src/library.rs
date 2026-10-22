@@ -100,6 +100,9 @@ pub struct MovieLibrary<'gc> {
     jpeg_tables: Option<Vec<u8>>,
     fonts: FontMap<'gc>,
     avm2_domain: Option<Avm2Domain<'gc>>,
+    gfx_flags: u32,
+    gradient_fills: u16,
+    gradient_images: HashMap<u16, (u16, String)>,
 }
 
 impl<'gc> MovieLibrary<'gc> {
@@ -112,7 +115,30 @@ impl<'gc> MovieLibrary<'gc> {
             jpeg_tables: None,
             fonts: Default::default(),
             avm2_domain: None,
+            gfx_flags: 0,
+            gradient_fills: 0,
+            gradient_images: HashMap::new(),
         }
+    }
+
+    pub fn set_gfx_flags(&mut self, flags: u32) {
+        self.gfx_flags = flags;
+    }
+
+    pub fn add_gradient_image(&mut self, id: u16, size: u16, url: String) {
+        self.gradient_images.insert(id, (size, url));
+    }
+
+    // GFxFillStyle::Read @fc4480, GFxMovieDataDef::LoadTaskData::LoadTaskData @ecf0d0 decomp
+    pub fn next_gradient_image(&mut self, radial: bool) -> Option<(CharacterId, u32, u32, String)> {
+        let n = self.gradient_fills;
+        self.gradient_fills += 1;
+        if self.gfx_flags & 2 == 0 {
+            return None;
+        }
+        let (size, url) = self.gradient_images.get(&n)?.clone();
+        let height = if radial { size } else { 1 };
+        Some((0xf000 + n, size.into(), height.into(), url))
     }
 
     /// Registers a character; returns `true` if successful, or `false` if a character with

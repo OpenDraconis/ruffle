@@ -697,7 +697,9 @@ impl<'gc> MovieLoader<'gc> {
             let request_url = request.url().to_string();
             let resolved_url = player.lock().unwrap().navigator().resolve_url(&request_url);
 
-            let fetch = player.lock().unwrap().fetch(request, FetchReason::LoadSwf);
+            let host_image = request_url.starts_with("img://");
+            let fetch = (!host_image)
+                .then(|| player.lock().unwrap().fetch(request, FetchReason::LoadSwf));
 
             let mut replacing_root_movie = false;
             player.lock().unwrap().update(|uc| -> Result<(), Error> {
@@ -747,6 +749,14 @@ impl<'gc> MovieLoader<'gc> {
                 MovieLoader::movie_loader_start(handle, uc)
             })?;
 
+            let Some(fetch) = fetch else {
+                player
+                    .lock()
+                    .unwrap()
+                    .update(|uc| MovieLoader::movie_loader_host_image(handle, uc, request_url))?;
+                return Ok(());
+            };
+
             let response = wait_for_full_response(fetch).await;
             let player = player.lock().unwrap();
             match response {
@@ -765,6 +775,58 @@ impl<'gc> MovieLoader<'gc> {
 
             Ok(())
         })
+    }
+
+    // CGFxWrapperImageLoader::LoadImageA @107deb0, CUIImageLoader::ConvertPath @6e5a00 decomp
+    fn movie_loader_host_image(
+        handle: LoaderHandle,
+        uc: &mut UpdateContext<'gc>,
+        url: String,
+    ) -> Result<(), Error> {
+        let Some((bitmap, width, height)) = uc.renderer.external_image(&url) else {
+            return Self::movie_loader_data(handle, uc, &[], url, 404, false, None);
+        };
+        if uc.load_manager.get_loader(handle).is_none() {
+            return Err(Error::Cancelled);
+        }
+        if uc.load_manager.load_cancelled_avm1(handle) {
+            return Ok(());
+        }
+        let movie = SwfMovie::new(
+            uc.gc(),
+            SwfMovieData::from_loaded_image(url, false, 0, width, height),
+        );
+        match uc.load_manager.get_loader_mut(handle) {
+            Some(Self {
+                movie: old,
+                loader_status,
+                ..
+            }) => {
+                *loader_status = LoaderStatus::Parsing;
+                *old = Some(movie)
+            }
+            _ => unreachable!(),
+        };
+        let domain = uc.avm2.stage_domain();
+        let mut activation = Avm2Activation::from_nothing(uc);
+        activation
+            .context
+            .library
+            .library_for_movie_mut(movie)
+            .set_avm2_domain(domain);
+        let bitmapdata = BitmapData::new_with_handle(activation.gc(), width, height, bitmap);
+        let bitmapdata_avm2 = BitmapDataObject::from_bitmap_data(activation.context, bitmapdata);
+        let bitmap_avm2 = activation
+            .avm2()
+            .classes()
+            .bitmap
+            .construct(&mut activation, &[bitmapdata_avm2.into()])
+            .unwrap()
+            .as_object()
+            .unwrap();
+        let bitmap_dobj = bitmap_avm2.as_display_object().unwrap();
+        MovieLoader::movie_loader_progress(handle, activation.context, 0, 0)?;
+        MovieLoader::movie_loader_complete(handle, activation.context, Some(bitmap_dobj), 200, false)
     }
 
     fn on_success_root_movie(

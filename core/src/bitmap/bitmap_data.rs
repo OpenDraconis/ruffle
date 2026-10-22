@@ -252,6 +252,17 @@ impl<'gc> BitmapData<'gc> {
         Self(data)
     }
 
+    pub fn new_with_handle(
+        mc: &Mutation<'gc>,
+        width: u32,
+        height: u32,
+        handle: BitmapHandle,
+    ) -> Self {
+        let mut data = BitmapRawData::new(width, height, true, 0);
+        data.bitmap_handle = Some(handle);
+        Self(BitmapRawDataWrapper::new(Gc::new(mc, data.into())))
+    }
+
     pub fn dummy(mc: &Mutation<'gc>) -> Self {
         Self(BitmapRawDataWrapper::dummy(mc))
     }

@@ -73,8 +73,15 @@ impl<'gc> BitmapCharacter<'gc> {
         if let Some(handle) = self.handle.get() {
             return Ok(handle.clone());
         }
-        let decoded = self.compressed.decode()?;
-        let new_handle = backend.register_bitmap(decoded)?;
+        let new_handle = match &self.compressed {
+            CompressedBitmap::External { url, .. } => {
+                backend
+                    .external_image(url)
+                    .ok_or(RenderError::UnknownType)?
+                    .0
+            }
+            compressed => backend.register_bitmap(compressed.decode()?)?,
+        };
         // FIXME - do we ever want to release this handle, to avoid taking up GPU memory?
         self.handle.set(new_handle.clone()).unwrap();
         Ok(new_handle)
@@ -94,6 +101,11 @@ pub enum CompressedBitmap {
         height: u32,
     },
     Lossless(DefineBitsLossless<'static>),
+    External {
+        width: u32,
+        height: u32,
+        url: String,
+    },
 }
 
 impl CompressedBitmap {
@@ -106,6 +118,10 @@ impl CompressedBitmap {
             CompressedBitmap::Lossless(define_bits_lossless) => BitmapSize {
                 width: define_bits_lossless.width.into(),
                 height: define_bits_lossless.height.into(),
+            },
+            CompressedBitmap::External { width, height, .. } => BitmapSize {
+                width: *width,
+                height: *height,
             },
         }
     }
@@ -120,6 +136,7 @@ impl CompressedBitmap {
             CompressedBitmap::Lossless(define_bits_lossless) => {
                 ruffle_render::utils::decode_define_bits_lossless(define_bits_lossless)
             }
+            CompressedBitmap::External { .. } => Err(RenderError::UnknownType),
         }
     }
 }

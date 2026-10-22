@@ -531,6 +531,11 @@ impl<'gc> MovieClip<'gc> {
                 TagCode::DefineBitsJpeg4 => shared.define_bits_jpeg_3_or_4(context, reader, 4),
                 TagCode::DefineBitsLossless => shared.define_bits_lossless(context, reader, 1),
                 TagCode::DefineBitsLossless2 => shared.define_bits_lossless(context, reader, 2),
+                TagCode::ExporterInfo => shared.exporter_info(context, reader),
+                TagCode::DefineExternalImage => shared.define_external_image(context, reader),
+                TagCode::DefineExternalGradientImage => {
+                    shared.define_external_gradient_image(context, reader)
+                }
                 TagCode::DefineButton => shared.define_button_1(context, reader),
                 TagCode::DefineButton2 => shared.define_button_2(context, reader),
                 TagCode::DefineButtonCxform => shared.define_button_cxform(context, reader),
@@ -3506,6 +3511,122 @@ impl<'gc, 'a> MovieClipShared<'gc> {
         Ok(())
     }
 
+    // GFxExporterInfoImpl::ReadExporterInfoTag @eb17c0 decomp
+    fn exporter_info(
+        &self,
+        context: &mut UpdateContext<'gc>,
+        reader: &mut SwfStream<'a>,
+    ) -> Result<(), Error> {
+        let info = reader.read_exporter_info()?;
+        self.library_mut(context).set_gfx_flags(info.flags);
+        Ok(())
+    }
+
+    fn external_url(&self, file_name: &swf::SwfStr) -> Option<String> {
+        let movie = self.movie();
+        let file_name = file_name.to_str_lossy(movie.encoding());
+        crate::backend::navigator::url_from_relative_url(movie.url(), &file_name)
+            .ok()
+            .map(|url| url.to_string())
+    }
+
+    // GFx_DefineExternalImageLoader @ebf8c0, GFxImageFileResourceCreator::CreateResource @ed1780 decomp
+    fn define_external_image(
+        &self,
+        context: &mut UpdateContext<'gc>,
+        reader: &mut SwfStream<'a>,
+    ) -> Result<(), Error> {
+        let image = reader.read_define_external_image()?;
+        let Some(url) = self.external_url(image.file_name) else {
+            return Ok(());
+        };
+        let bitmap = Gc::new(
+            context.gc(),
+            BitmapCharacter::new(CompressedBitmap::External {
+                width: image.width.into(),
+                height: image.height.into(),
+                url,
+            }),
+        );
+        let _ = bitmap.bitmap_handle(context.renderer);
+        self.library_mut(context)
+            .register_character(image.id, Character::Bitmap(bitmap));
+        Ok(())
+    }
+
+    // GFx_DefineExternalGradientImageLoader @ebfa80 decomp
+    fn define_external_gradient_image(
+        &self,
+        context: &mut UpdateContext<'gc>,
+        reader: &mut SwfStream<'a>,
+    ) -> Result<(), Error> {
+        let image = reader.read_define_external_gradient_image()?;
+        if let Some(url) = self.external_url(image.file_name) {
+            self.library_mut(context)
+                .add_gradient_image(image.id, image.size, url);
+        }
+        Ok(())
+    }
+
+    // GFxFillStyle::Read @fc4480, GFxLineStyle::Read @fc4af0 decomp
+    fn gradient_images(&self, context: &mut UpdateContext<'gc>, shape: &mut swf::Shape) {
+        let mut styles = vec![&mut shape.styles];
+        for record in shape.shape.iter_mut() {
+            if let swf::ShapeRecord::StyleChange(change) = record
+                && let Some(new_styles) = change.new_styles.as_mut()
+            {
+                styles.push(new_styles);
+            }
+        }
+        for styles in styles {
+            for fill in styles.fill_styles.iter_mut() {
+                if let Some(image) = self.gradient_image(context, fill) {
+                    *fill = image;
+                }
+            }
+            for line in styles.line_styles.iter_mut() {
+                if let Some(image) = self.gradient_image(context, line.fill_style()) {
+                    *line = line.clone().with_fill_style(image);
+                }
+            }
+        }
+    }
+
+    fn gradient_image(
+        &self,
+        context: &mut UpdateContext<'gc>,
+        fill: &swf::FillStyle,
+    ) -> Option<swf::FillStyle> {
+        let (gradient, radial) = match fill {
+            swf::FillStyle::LinearGradient(gradient) => (gradient, false),
+            swf::FillStyle::RadialGradient(gradient) => (gradient, true),
+            swf::FillStyle::FocalGradient { gradient, .. } => (gradient, true),
+            _ => return None,
+        };
+        let (id, width, height, url) = self.library_mut(context).next_gradient_image(radial)?;
+        if self.library_mut(context).character_by_id(id).is_none() {
+            let bitmap = Gc::new(
+                context.gc(),
+                BitmapCharacter::new(CompressedBitmap::External { width, height, url }),
+            );
+            let _ = bitmap.bitmap_handle(context.renderer);
+            self.library_mut(context)
+                .register_character(id, Character::Bitmap(bitmap));
+        }
+        let matrix = gradient.matrix
+            * swf::Matrix::translate(swf::Twips::new(-16384), swf::Twips::new(-16384))
+            * swf::Matrix::scale(
+                swf::Fixed16::from_f64(32768.0 / width as f64),
+                swf::Fixed16::from_f64(32768.0 / height as f64),
+            );
+        Some(swf::FillStyle::Bitmap {
+            id,
+            matrix,
+            is_smoothed: true,
+            is_repeating: false,
+        })
+    }
+
     #[inline]
     fn define_scaling_grid(
         &self,
@@ -3546,7 +3667,8 @@ impl<'gc, 'a> MovieClipShared<'gc> {
         reader: &mut SwfStream<'a>,
         version: u8,
     ) -> Result<(), Error> {
-        let swf_shape = reader.read_define_shape(version)?;
+        let mut swf_shape = reader.read_define_shape(version)?;
+        self.gradient_images(context, &mut swf_shape);
         let id = swf_shape.id;
         let graphic = Graphic::from_swf_tag(context, swf_shape, self.movie());
         self.library_mut(context)
