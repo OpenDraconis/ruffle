@@ -35,6 +35,10 @@ pub trait RenderTarget: Debug + 'static {
         command_buffers: I,
         frame: Self::Frame,
     ) -> wgpu::SubmissionIndex;
+
+    fn existing(&self) -> Option<wgpu::Texture> {
+        None
+    }
 }
 
 #[derive(Debug)]

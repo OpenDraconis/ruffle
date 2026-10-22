@@ -644,14 +644,18 @@ impl<T: RenderTarget + 'static> RenderBackend for WgpuRenderBackend<T> {
             self.active_frame.maybe_flush(&self.descriptors);
         }
 
-        self.surface.draw_commands_and_copy_to(
-            frame_output.view(),
-            RenderTargetMode::FreshWithColor(wgpu::Color {
+        let mode = match self.target.existing() {
+            Some(texture) => RenderTargetMode::FreshWithTexture(texture),
+            None => RenderTargetMode::FreshWithColor(wgpu::Color {
                 r: f64::from(clear.r) / 255.0,
                 g: f64::from(clear.g) / 255.0,
                 b: f64::from(clear.b) / 255.0,
                 a: f64::from(clear.a) / 255.0,
             }),
+        };
+        self.surface.draw_commands_and_copy_to(
+            frame_output.view(),
+            mode,
             &self.descriptors,
             &mut self.active_frame.staging_belt,
             &mut self.chunk_buffers,
@@ -1213,29 +1217,34 @@ pub async fn request_adapter_and_device(
 }
 
 // We try to request the highest limits we can get away with
-async fn request_device(
-    adapter: &wgpu::Adapter,
-) -> Result<(wgpu::Device, wgpu::Queue), wgpu::RequestDeviceError> {
+pub fn device_features_and_limits(
+    adapter_features: wgpu::Features,
+    adapter_limits: wgpu::Limits,
+) -> (wgpu::Features, wgpu::Limits) {
     // We start off with the lowest limits we actually need - basically GL-ES 3.0
     let mut limits = wgpu::Limits::downlevel_webgl2_defaults();
     // Then we increase parts of it to the maximum supported by the adapter, to take advantage of
     // more powerful hardware or capabilities
-    limits = limits.using_resolution(adapter.limits());
-    limits = limits.using_alignment(adapter.limits());
-    limits.max_uniform_buffer_binding_size = adapter.limits().max_uniform_buffer_binding_size;
-    limits.max_inter_stage_shader_variables = adapter.limits().max_inter_stage_shader_variables;
+    limits = limits.using_resolution(adapter_limits.clone());
+    limits = limits.using_alignment(adapter_limits.clone());
+    limits.max_uniform_buffer_binding_size = adapter_limits.max_uniform_buffer_binding_size;
+    limits.max_inter_stage_shader_variables = adapter_limits.max_inter_stage_shader_variables;
     // This will be a default limit in a future wgpu version (down from 8).
     // It's required for some WebGL devices to be supported.
     limits.max_color_attachments = 4;
-
-    let mut features = Default::default();
 
     let optional_features = wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES
         | wgpu::Features::TEXTURE_COMPRESSION_BC
         | wgpu::Features::FLOAT32_FILTERABLE
         | GpuProfiler::ALL_WGPU_TIMER_FEATURES;
 
-    features |= optional_features & adapter.features();
+    (optional_features & adapter_features, limits)
+}
+
+async fn request_device(
+    adapter: &wgpu::Adapter,
+) -> Result<(wgpu::Device, wgpu::Queue), wgpu::RequestDeviceError> {
+    let (features, limits) = device_features_and_limits(adapter.features(), adapter.limits());
 
     adapter
         .request_device(&wgpu::DeviceDescriptor {
