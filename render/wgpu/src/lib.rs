@@ -36,7 +36,7 @@ pub mod target;
 pub mod backend;
 mod blend;
 mod buffer_builder;
-mod buffer_pool;
+pub mod buffer_pool;
 #[cfg(feature = "clap")]
 pub mod clap;
 pub mod descriptors;

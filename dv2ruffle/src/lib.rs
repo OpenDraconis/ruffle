@@ -22,6 +22,7 @@ use ruffle_core::{FloatDuration, Player, PlayerBuilder};
 use ruffle_render_wgpu::backend::{
     WgpuRenderBackend, create_wgpu_instance, request_adapter_and_device,
 };
+use ruffle_render_wgpu::buffer_pool::TexturePool;
 use ruffle_render_wgpu::descriptors::Descriptors;
 use ruffle_render_wgpu::target::TextureTarget;
 use ruffle_render_wgpu::wgpu;
@@ -123,6 +124,8 @@ fn build(
     }))
 }
 
+static POOL: std::sync::OnceLock<Arc<Mutex<TexturePool>>> = std::sync::OnceLock::new();
+
 // CGFxPlayStream::Notifyloaded @107e6c0 decomp
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dv2r_open_on_unity(def: *const Def) -> *mut Movie {
@@ -133,6 +136,10 @@ pub unsafe extern "C" fn dv2r_open_on_unity(def: *const Def) -> *mut Movie {
     let Ok(mut renderer) = WgpuRenderBackend::new(descriptors.clone(), unity::UnityTarget { width: 1, height: 1, built: Mutex::new(None) }) else {
         return std::ptr::null_mut();
     };
+    // CGFxPlayStreamManager::Initialize @10810d0 decomp
+    renderer.disable_msaa();
+    // CGFxPlayStreamManager::Initialize @10810d0 decomp
+    renderer.set_shared_texture_pool(POOL.get_or_init(Default::default).clone());
     renderer.set_external_images(Arc::new(images::Images(descriptors, Default::default())));
     build(def, 1, 1, Box::new(renderer))
 }

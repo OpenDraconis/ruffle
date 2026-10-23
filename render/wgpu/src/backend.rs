@@ -33,7 +33,7 @@ use std::any::Any;
 use std::borrow::Cow;
 use std::cell::Cell;
 use std::num::NonZeroU32;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use swf::Color;
 use tracing::instrument;
 use wgpu::SubmissionIndex;
@@ -77,7 +77,8 @@ pub struct WgpuRenderBackend<T: RenderTarget> {
     // This is currently unused - we just store it to report in
     // `get_viewport_dimensions`
     viewport_scale_factor: f64,
-    texture_pool: TexturePool,
+    texture_pool: Arc<Mutex<TexturePool>>,
+    single_sample: bool,
     offscreen_texture_pool: TexturePool,
     pub(crate) offscreen_buffer_pool: Arc<BufferPool<wgpu::Buffer, BufferDimensions>>,
     chunk_buffers: ChunkBuffers,
@@ -279,7 +280,8 @@ impl<T: RenderTarget> WgpuRenderBackend<T> {
             meshes: Vec::new(),
             shape_tessellator: ShapeTessellator::new(),
             viewport_scale_factor: 1.0,
-            texture_pool: TexturePool::new(),
+            texture_pool: Arc::new(Mutex::new(TexturePool::new())),
+            single_sample: false,
             offscreen_texture_pool: TexturePool::new(),
             offscreen_buffer_pool: Arc::new(offscreen_buffer_pool),
             chunk_buffers,
@@ -287,6 +289,15 @@ impl<T: RenderTarget> WgpuRenderBackend<T> {
             profiler,
             external_images: None,
         })
+    }
+
+    pub fn set_shared_texture_pool(&mut self, pool: Arc<Mutex<TexturePool>>) {
+        self.texture_pool = pool;
+    }
+
+    pub fn disable_msaa(&mut self) {
+        self.single_sample = true;
+        self.set_quality(StageQuality::Low);
     }
 
     pub fn set_external_images(&mut self, images: Arc<dyn ExternalImages>) {
@@ -468,7 +479,7 @@ impl<T: RenderTarget + 'static> RenderBackend for WgpuRenderBackend<T> {
         );
 
         self.viewport_scale_factor = dimensions.scale_factor;
-        self.texture_pool = TexturePool::new();
+        *self.texture_pool.lock().unwrap() = TexturePool::new();
     }
 
     fn create_context3d(
@@ -520,6 +531,7 @@ impl<T: RenderTarget + 'static> RenderBackend for WgpuRenderBackend<T> {
     }
 
     fn set_quality(&mut self, quality: StageQuality) {
+        let quality = if self.single_sample { StageQuality::Low } else { quality };
         self.surface = Surface::new(
             &self.descriptors,
             quality,
@@ -667,6 +679,8 @@ impl<T: RenderTarget + 'static> RenderBackend for WgpuRenderBackend<T> {
                 a: f64::from(clear.a) / 255.0,
             }),
         };
+        let pool = self.texture_pool.clone();
+        let mut pool = pool.lock().unwrap();
         self.surface.draw_commands_and_copy_to(
             frame_output.view(),
             mode,
@@ -679,8 +693,9 @@ impl<T: RenderTarget + 'static> RenderBackend for WgpuRenderBackend<T> {
             &self.meshes,
             commands,
             LayerRef::None,
-            &mut self.texture_pool,
+            &mut pool,
         );
+        drop(pool);
         self.profiler
             .resolve_queries(&mut self.active_frame.command_encoder);
         self.active_frame.staging_belt.finish();

@@ -6,7 +6,7 @@ use std::ops::Deref;
 use std::sync::{Arc, Mutex, Weak};
 
 type PoolInner<T> = Mutex<Vec<T>>;
-type Constructor<Type, Description> = Box<dyn Fn(&Descriptors, &Description) -> Type>;
+type Constructor<Type, Description> = Box<dyn Fn(&Descriptors, &Description) -> Type + Send>;
 
 #[derive(Debug, Default)]
 pub struct TexturePool {
