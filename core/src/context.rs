@@ -685,6 +685,8 @@ pub enum ActionType<'gc> {
         method: AvmString<'gc>,
         args: Vec<Avm1Value<'gc>>,
     },
+
+    StageResize,
 }
 
 impl ActionType<'_> {
@@ -734,6 +736,7 @@ impl fmt::Debug for ActionType<'_> {
                 .field("method", method)
                 .field("args", args)
                 .finish(),
+            ActionType::StageResize => f.write_str("ActionType::StageResize"),
         }
     }
 }

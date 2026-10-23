@@ -606,13 +606,7 @@ impl Player {
         });
         self.frame_accumulator += FloatDuration::from_secs(audio_skew);
 
-        self.update_sockets();
-        self.update_net_connections();
-        self.update_timers(dt);
-        self.update(|context| {
-            StreamManager::tick(context, dt);
-        });
-        self.audio.tick();
+        self.tick_services(dt);
     }
 
     pub fn time_til_next_timer(&self) -> Option<f64> {
@@ -1053,6 +1047,8 @@ impl Player {
             PlayerEvent::FocusGained | PlayerEvent::FocusLost => self.handle_focus_event(event),
             PlayerEvent::KeyDown { .. }
             | PlayerEvent::KeyUp { .. }
+            | PlayerEvent::KeyCodeDown { .. }
+            | PlayerEvent::KeyCodeUp { .. }
             | PlayerEvent::MouseMove { .. }
             | PlayerEvent::MouseUp { .. }
             | PlayerEvent::MouseDown { .. }
@@ -2288,6 +2284,8 @@ impl Player {
                     // so this doesn't require any further execution.
                     Avm1::notify_system_listeners(action.clip, listener, method, &args, context);
                 }
+
+                ActionType::StageResize => context.stage.notify_gfx_resize(context),
             }
         }
     }
@@ -2565,36 +2563,121 @@ impl Player {
         })
     }
 
-    pub fn invoke(&mut self, method: &str, args: Vec<ExternalValue>) -> ExternalValue {
+    // GFxMovieRoot::Invoke @f2a4b0, GFxSprite::Invoke @f3ff10, GAS_Invoke @f0af00, GFxMovieRoot::ASValue2GFxValue @f27670 decomp
+    pub fn invoke(&mut self, method: &str, args: Vec<ExternalValue>) -> Option<String> {
         self.mutate_with_update_context(|context| {
-            let Some(root) = context.stage.root_clip() else {
-                return ExternalValue::Null;
-            };
-            let Some(this) = root.object1() else {
-                return ExternalValue::Null;
-            };
-            let mut activation = crate::avm1::Activation::from_nothing(
+            let root = context.stage.root_clip()?;
+            let this = root.object1()?;
+            let mut base = crate::avm1::Activation::from_nothing(
                 context,
                 crate::avm1::ActivationIdentifier::root("[Invoke]"),
                 root,
             );
-            let args: Vec<_> = args
-                .into_iter()
-                .map(|v| v.into_avm1(&mut activation))
-                .collect();
-            let name = crate::string::AvmString::new_utf8(activation.gc(), method);
-            match this.call_method(
-                name,
-                &args,
-                &mut activation,
-                crate::avm1::ExecutionReason::FunctionCall,
-            ) {
-                Ok(v) => {
-                    ExternalValue::from_avm1(&mut activation, v).unwrap_or(ExternalValue::Null)
-                }
-                Err(_) => ExternalValue::Null,
-            }
+            base.run_with_child_frame_for_display_object(
+                "[Invoke]",
+                root,
+                root.swf_version(),
+                |activation| {
+                    let args: Vec<_> = args
+                        .into_iter()
+                        .map(|v| match v {
+                            ExternalValue::String(s) => crate::avm1::Value::String(
+                                crate::string::AvmString::new_utf8(activation.gc(), s),
+                            ),
+                            v => v.into_avm1(activation),
+                        })
+                        .collect();
+                    let name = crate::string::AvmString::new_utf8(activation.gc(), method);
+                    let callable = activation.get_variable(name).ok()?;
+                    let is_function = matches!(
+                        crate::avm1::Value::from(callable.clone()),
+                        crate::avm1::Value::Object(function) if function.as_function().is_some()
+                    );
+                    if !is_function {
+                        return None;
+                    }
+                    let result = callable
+                        .call_with_default_this(this.into(), name, activation, &args)
+                        .ok()?;
+                    let result = result.coerce_to_string(activation).ok()?;
+                    Some(result.to_utf8_lossy().into_owned())
+                },
+            )
         })
+    }
+
+    // GFxMovieRoot::HitTest @f229b0 decomp
+    pub fn hit_test(&mut self, x: f64, y: f64) -> bool {
+        self.mutate_with_update_context(|context| {
+            let point = context.stage.inverse_view_matrix() * Point::from_pixels(x, y);
+            let levels: Vec<_> = context.stage.iter_render_list().collect();
+            levels.into_iter().rev().any(|level| {
+                level.hit_test_shape(context, point, HitTestOptions::AVM_HIT_TEST)
+            })
+        })
+    }
+
+    pub fn enable_gfx_view(&mut self) {
+        self.mutate_with_update_context(|context| context.stage.enable_gfx_view(context));
+    }
+
+    // CGFxPlayStream::Render @107ed80 decomp
+    pub fn set_gfx_view(&mut self, width: u32, height: u32, desktop_aspect: f32) {
+        self.mutate_with_update_context(|context| {
+            let stage = context.stage;
+            stage.set_gfx_scale_mode(context, crate::display_object::stage::gfx::FIT_VERTICAL);
+            let viewport = context.renderer.viewport_dimensions();
+            if (viewport.width, viewport.height) != (width, height) {
+                context.renderer.set_viewport_dimensions(ViewportDimensions {
+                    width,
+                    height,
+                    scale_factor: 1.0,
+                });
+            }
+            let aspect = desktop_aspect / (width as f32 / height as f32);
+            stage.set_gfx_aspect(context, aspect);
+        });
+        self.needs_render = true;
+    }
+
+    // GFxMovieRoot::Advance @f2cb80 decomp
+    pub fn advance(&mut self, dt: FloatDuration, catch_up: u32) {
+        if !self.is_playing() {
+            return;
+        }
+        self.frame_accumulator += dt;
+        let frame_duration = self.frame_duration();
+        if self.frame_accumulator >= frame_duration {
+            let mut left = catch_up;
+            loop {
+                self.frame_accumulator = if catch_up == 0 {
+                    FloatDuration::from_millis(
+                        self.frame_accumulator.as_millis() % frame_duration.as_millis(),
+                    )
+                } else {
+                    self.frame_accumulator - frame_duration
+                };
+                let timer = Instant::now();
+                self.run_frame();
+                self.add_frame_timing(timer.elapsed().as_millis() as f64);
+                if left == 0 || self.frame_accumulator < frame_duration {
+                    break;
+                }
+                left -= 1;
+            }
+        }
+        self.time_offset = 0;
+        self.tick_services(dt);
+    }
+
+    fn tick_services(&mut self, dt: FloatDuration) {
+        self.update_sockets();
+        self.update_net_connections();
+        self.update_timers(dt);
+        self.update(|context| {
+            StreamManager::tick(context, dt);
+        });
+        self.audio.tick();
     }
 
     pub fn spoofed_url(&self) -> Option<&str> {

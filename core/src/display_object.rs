@@ -37,7 +37,7 @@ mod interactive;
 mod loader_display;
 mod morph_shape;
 mod movie_clip;
-mod stage;
+pub(crate) mod stage;
 mod text;
 mod text_line;
 mod video;

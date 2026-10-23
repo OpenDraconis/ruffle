@@ -60,7 +60,7 @@ mod selection;
 pub(crate) mod shared_object;
 pub(crate) mod sound;
 mod sound_codec;
-mod stage;
+pub(crate) mod stage;
 pub(crate) mod string;
 pub(crate) mod style_sheet;
 pub(crate) mod system;

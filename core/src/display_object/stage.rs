@@ -1,5 +1,7 @@
 //! Root stage impl
 
+pub mod gfx;
+
 use crate::avm1::Object as Avm1Object;
 use crate::avm2::object::Stage3DObject;
 use crate::avm2::{
@@ -8,7 +10,7 @@ use crate::avm2::{
 };
 use crate::backend::ui::MouseCursor;
 use crate::config::Letterbox;
-use crate::context::{RenderContext, UpdateContext};
+use crate::context::{ActionType, RenderContext, UpdateContext};
 use crate::display_object::container::ChildContainer;
 use crate::display_object::interactive::{InteractiveObjectBase, TInteractiveObject};
 use crate::display_object::{BoundsMode, DisplayObjectBase};
@@ -150,6 +152,8 @@ pub struct StageData<'gc> {
 
     /// Whether to show default context menu items
     show_menu: Cell<bool>,
+
+    gfx: Cell<Option<gfx::GfxView>>,
 }
 
 impl<'gc> Stage<'gc> {
@@ -189,6 +193,7 @@ impl<'gc> Stage<'gc> {
                 viewport_matrix: Cell::new(Matrix::IDENTITY),
                 letterbox_matrix: Cell::new(Matrix::IDENTITY),
                 focus_tracker: FocusTracker::new(gc_context),
+                gfx: Cell::new(None),
             },
         ));
         stage.set_is_root(true);
@@ -487,6 +492,10 @@ impl<'gc> Stage<'gc> {
 
     /// Update the stage's transform matrix in response to a root movie change.
     pub fn build_matrices(self, context: &mut UpdateContext<'gc>) {
+        if let Some(view) = self.0.gfx.get() {
+            self.build_gfx_matrices(context, view);
+            return;
+        }
         let scale_mode = self.0.scale_mode.get();
         let align = self.0.align.get();
         let prev_stage_size = self.0.stage_size.get();
@@ -611,6 +620,102 @@ impl<'gc> Stage<'gc> {
         if scale_mode == StageScaleMode::NoScale && stage_size_changed {
             self.fire_resize_event(context);
         }
+    }
+
+    pub fn gfx_view(self) -> Option<gfx::GfxView> {
+        self.0.gfx.get()
+    }
+
+    pub fn enable_gfx_view(self, context: &mut UpdateContext<'gc>) {
+        self.0.gfx.set(Some(Default::default()));
+        self.build_matrices(context);
+    }
+
+    // GFxMovieRoot::SetViewScaleMode @f1d210 decomp
+    pub fn set_gfx_scale_mode(self, context: &mut UpdateContext<'gc>, scale_mode: u8) {
+        if let Some(view) = self.0.gfx.get() {
+            self.0.gfx.set(Some(gfx::GfxView { scale_mode, ..view }));
+            self.build_matrices(context);
+        }
+    }
+
+    // GFxMovieRoot::SetViewAlignment @f1d230 decomp
+    pub fn set_gfx_align(self, context: &mut UpdateContext<'gc>, align: u8) {
+        if let Some(view) = self.0.gfx.get() {
+            self.0.gfx.set(Some(gfx::GfxView { align, ..view }));
+            self.build_matrices(context);
+        }
+    }
+
+    // GFxMovieRoot::SetViewport @f2a020 decomp
+    pub fn set_gfx_aspect(self, context: &mut UpdateContext<'gc>, aspect: f32) {
+        if let Some(view) = self.0.gfx.get() {
+            self.0.gfx.set(Some(gfx::GfxView { aspect, ..view }));
+            self.build_matrices(context);
+        }
+    }
+
+    // GFxMovieRoot::SetViewport @f2a020, GFxMovieRoot::UpdateViewport @f21bf0 decomp
+    fn build_gfx_matrices(self, context: &mut UpdateContext<'gc>, old: gfx::GfxView) {
+        let viewport = context.renderer.viewport_dimensions();
+        let frame = *self.movie().stage_size();
+        let mut view = gfx::GfxView {
+            width: viewport.width as i32,
+            height: viewport.height as i32,
+            ..old
+        };
+        view.rect = gfx::visible_rect(
+            &view,
+            (frame.x_max - frame.x_min).get() as f32,
+            (frame.y_max - frame.y_min).get() as f32,
+        );
+        self.0.gfx.set(Some(view));
+        let matrix = gfx::view_matrix(&view);
+        self.0.letterbox_matrix.set(matrix);
+        self.0.viewport_matrix.set(matrix);
+        let [x0, y0, x1, y1] = view.rect;
+        self.0.view_bounds.set(Rectangle {
+            x_min: Twips::new(x0 as i32),
+            y_min: Twips::new(y0 as i32),
+            x_max: Twips::new(x1 as i32),
+            y_max: Twips::new(y1 as i32),
+        });
+        // GASStageCtorFunction::GetMemberRaw @fb1820 decomp
+        self.0
+            .stage_size
+            .set((((x1 - x0) / 20.0) as u32, ((y1 - y0) / 20.0) as u32));
+        if gfx::resized(&old, &view)
+            && let Some(root) = self.root_clip()
+        {
+            context
+                .action_queue
+                .queue_action(root, ActionType::StageResize, false);
+        }
+    }
+
+    // GASStageCtorFunction::NotifyOnResize @fb1cf0 decomp
+    pub fn notify_gfx_resize(self, context: &mut UpdateContext<'gc>) {
+        let Some(root) = self.root_clip() else {
+            return;
+        };
+        let args = {
+            let mut activation = crate::avm1::Activation::from_nothing(
+                context,
+                crate::avm1::ActivationIdentifier::root("[Stage onResize]"),
+                root,
+            );
+            match crate::avm1::globals::stage::gfx_visible_rect(&mut activation) {
+                Ok(Some(rect)) => vec![rect],
+                _ => vec![],
+            }
+        };
+        crate::avm1::Avm1::notify_system_listeners(
+            root,
+            istr!(context, "Stage"),
+            istr!(context, "onResize"),
+            &args,
+            context,
+        );
     }
 
     /// Render stage from the perspective of the viewport.
