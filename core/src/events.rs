@@ -14,6 +14,14 @@ pub enum PlayerEvent {
     KeyUp {
         key: KeyDescriptor,
     },
+    KeyCodeDown {
+        key_code: KeyCode,
+        key_char: Option<char>,
+    },
+    KeyCodeUp {
+        key_code: KeyCode,
+        key_char: Option<char>,
+    },
     MouseMove {
         x: f64,
         y: f64,
@@ -482,6 +490,12 @@ pub enum TextControlCode {
     Enter,
     Delete,
     DeleteWord,
+    LineHome,
+    LineEnd,
+    LineUp,
+    LineDown,
+    PageUp,
+    PageDown,
 }
 
 impl TextControlCode {

@@ -206,6 +206,17 @@ impl InputManager {
                 }
             }
 
+            PlayerEvent::KeyCodeDown { key_code, key_char } => InputEvent::KeyDown {
+                key_code,
+                key_char,
+                key_location: KeyLocation::Standard,
+            },
+            PlayerEvent::KeyCodeUp { key_code, key_char } => InputEvent::KeyUp {
+                key_code,
+                key_char,
+                key_location: KeyLocation::Standard,
+            },
+
             PlayerEvent::MouseMove { x, y } => InputEvent::MouseMove { x, y },
             PlayerEvent::MouseUp { x, y, button } => InputEvent::MouseUp { x, y, button },
             PlayerEvent::MouseDown {

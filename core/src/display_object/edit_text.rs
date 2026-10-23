@@ -151,6 +151,8 @@ pub struct EditTextData<'gc> {
     /// the invariants that selection is always None for an unfocused AVM1 field, and never None for an AVM2 field.
     selection: Cell<Option<TextSelection>>,
 
+    preferred_x: Cell<Option<Twips>>,
+
     /// The current intrinsic bounds of the text field.
     bounds: Cell<Rectangle<Twips>>,
 
@@ -339,6 +341,7 @@ impl<'gc> EditText<'gc> {
                 bound_display_object: Lock::new(None),
                 class: Lock::new(None),
                 selection: Cell::new(selection),
+                preferred_x: Cell::new(None),
                 render_settings: Default::default(),
                 hscroll: Cell::new(0.0),
                 scroll: Cell::new(1),
@@ -1490,6 +1493,8 @@ impl<'gc> EditText<'gc> {
     }
 
     pub fn set_selection(self, selection: Option<TextSelection>) {
+        // GFxTextEditorKit::SetCursorPos @f75980 decomp
+        self.0.preferred_x.set(None);
         let old_selection = self.0.selection.get();
         if let Some(mut selection) = selection {
             selection.clamp(self.0.text_spans.borrow().text().len());
@@ -1738,6 +1743,12 @@ impl<'gc> EditText<'gc> {
                 };
                 self.set_selection(Some(TextSelection::for_position(new_pos)));
             }
+            TextControlCode::LineHome
+            | TextControlCode::LineEnd
+            | TextControlCode::LineUp
+            | TextControlCode::LineDown
+            | TextControlCode::PageUp
+            | TextControlCode::PageDown => self.move_like_gfx(control_code, selection),
             TextControlCode::SelectLeft
             | TextControlCode::SelectLeftWord
             | TextControlCode::SelectLeftLine
@@ -1944,6 +1955,125 @@ impl<'gc> EditText<'gc> {
             TextControlCode::SelectLeftDocument | TextControlCode::MoveLeftDocument => 0,
             _ => unreachable!(),
         }
+    }
+
+    // GFxTextEditorKit::OnKeyDown @f763d0 decomp
+    fn move_like_gfx(self, control_code: TextControlCode, selection: TextSelection) {
+        let cursor = selection.to;
+        let mut preferred_x = None;
+        let position = match control_code {
+            TextControlCode::LineUp if !selection.is_caret() => selection.start(),
+            TextControlCode::LineDown if !selection.is_caret() => selection.end(),
+            _ => {
+                let Some(line) = self.line_of_cursor_like_gfx(cursor) else {
+                    return;
+                };
+                let x = self
+                    .0
+                    .preferred_x
+                    .get()
+                    .unwrap_or_else(|| self.caret_x(cursor, line));
+                let lines = self.layout_lines();
+                let page = (self.bottom_scroll() + 1).saturating_sub(self.scroll());
+                match control_code {
+                    TextControlCode::LineHome => self.line_offset(line).unwrap_or(cursor),
+                    TextControlCode::LineEnd => self.line_end_like_gfx(line),
+                    TextControlCode::LineUp if line == 0 => 0,
+                    TextControlCode::LineUp => {
+                        preferred_x = Some(x);
+                        self.position_in_line_like_gfx(line - 1, x)
+                    }
+                    TextControlCode::LineDown if line + 1 < lines => {
+                        preferred_x = Some(x);
+                        self.position_in_line_like_gfx(line + 1, x)
+                    }
+                    TextControlCode::LineDown => self.text().len(),
+                    TextControlCode::PageUp => {
+                        preferred_x = Some(x);
+                        if line < page {
+                            0
+                        } else {
+                            self.position_in_line_like_gfx(line - page, x)
+                        }
+                    }
+                    _ => {
+                        preferred_x = Some(x);
+                        if line + page >= lines {
+                            self.text().len()
+                        } else {
+                            self.position_in_line_like_gfx(line + page, x)
+                        }
+                    }
+                }
+            }
+        };
+        if position != cursor {
+            self.set_selection(Some(TextSelection::for_position(position)));
+            self.0.preferred_x.set(preferred_x);
+        } else if !selection.is_caret() {
+            self.set_selection(Some(TextSelection::for_position(position)));
+        }
+    }
+
+    // GFxTextEditorKit::CalcCursorRectInLineBuffer @f750a0 decomp
+    fn line_of_cursor_like_gfx(self, cursor: usize) -> Option<usize> {
+        self.line_index_of_char(cursor).or_else(|| {
+            (cursor >= self.text().len())
+                .then(|| self.layout_lines().checked_sub(1))
+                .flatten()
+        })
+    }
+
+    // GFxTextEditorKit::CalcCursorRectOnScreen @f753a0 decomp
+    fn caret_x(self, position: usize, line: usize) -> Twips {
+        let layout = self.0.layout.borrow();
+        let Some(line) = layout.lines().get(line) else {
+            return Twips::ZERO;
+        };
+        if let Some((start, _)) = line.char_x_bounds(position) {
+            return start;
+        }
+        position
+            .checked_sub(1)
+            .and_then(|previous| line.char_x_bounds(previous))
+            .map_or(Twips::ZERO, |(_, end)| end)
+    }
+
+    // GFxTextEditorKit::OnKeyDown @f763d0, GFxTextDocView::GetLineLength @f72b90 decomp
+    fn line_end_like_gfx(self, line: usize) -> usize {
+        let layout = self.0.layout.borrow();
+        let Some(line) = layout.lines().get(line) else {
+            return 0;
+        };
+        let text = self.text();
+        let end = line.end();
+        if end > line.start() && string_utils::swf_is_newline(text.at(end - 1)) {
+            end - 1
+        } else {
+            end
+        }
+    }
+
+    // GFxTextDocView::GetCursorPosInLineByOffset @f6ef80 decomp
+    fn position_in_line_like_gfx(self, line: usize, x: Twips) -> usize {
+        let end = self.line_end_like_gfx(line);
+        let layout = self.0.layout.borrow();
+        let Some(line) = layout.lines().get(line) else {
+            return end;
+        };
+        for position in line.start()..end {
+            if let Some((start, finish)) = line.char_x_bounds(position)
+                && x < finish
+            {
+                let half = (finish - start) / 2;
+                return if x - start > half {
+                    position + 1
+                } else {
+                    position
+                };
+            }
+        }
+        end
     }
 
     /// Find the nearest word boundary before (or exceptionally at) `pos`,
