@@ -5,7 +5,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 
 use ash::vk;
 use ash::vk::TaggedStructure;
-use ruffle_render_wgpu::backend::device_features_and_limits;
+use ruffle_render_wgpu::backend::{WgpuRenderBackend, device_features_and_limits};
+use ruffle_render::backend::RenderBackend;
 use ruffle_render_wgpu::descriptors::Descriptors;
 use ruffle_render_wgpu::target::{RenderTarget, RenderTargetFrame};
 use ruffle_render_wgpu::wgpu;
@@ -116,6 +117,7 @@ const RENDERER_VULKAN: i32 = 21;
 const DEVICE_EVENT_INITIALIZE: i32 = 0;
 const DEVICE_EVENT_SHUTDOWN: i32 = 1;
 const RENDER_PASS_ENSURE_OUTSIDE: i32 = 2;
+const QUEUE_ACCESS_DONT_CARE: i32 = 0;
 const QUEUE_ACCESS_ALLOW: i32 = 1;
 const EVENT_ENSURE_PREVIOUS_FRAME_SUBMISSION: u32 = 1;
 const EVENT_FLUSH_COMMAND_BUFFERS: u32 = 2;
@@ -146,6 +148,7 @@ static EVENT: AtomicI32 = AtomicI32::new(-1);
 static HOOK: Mutex<Option<Hook>> = Mutex::new(None);
 static GPU: OnceLock<Arc<Descriptors>> = OnceLock::new();
 static FRAME: Mutex<Option<wgpu::Texture>> = Mutex::new(None);
+static TARGET: Mutex<Option<(vk::Image, vk::Format, vk::Extent3D)>> = Mutex::new(None);
 
 fn leak(name: &CStr) -> &'static CStr {
     Box::leak(name.to_owned().into_boxed_c_str())
@@ -586,10 +589,19 @@ unsafe extern "C" fn device_event(event: i32) {
             return;
         }
     };
-    let id = unsafe { ((*graphics).reserve_event_id_range)(1) };
+    let id = unsafe { ((*graphics).reserve_event_id_range)(2) };
+    // IUnityGraphicsVulkan.h AccessRenderBufferTexture unity
     unsafe {
         ((*vulkan).configure_event)(
             id,
+            &UnityVulkanPluginEventConfig {
+                render_pass_precondition: RENDER_PASS_ENSURE_OUTSIDE,
+                graphics_queue_access: QUEUE_ACCESS_DONT_CARE,
+                flags: EVENT_ENSURE_PREVIOUS_FRAME_SUBMISSION | EVENT_MODIFIES_COMMAND_BUFFERS_STATE,
+            },
+        );
+        ((*vulkan).configure_event)(
+            id + 1,
             &UnityVulkanPluginEventConfig {
                 render_pass_precondition: RENDER_PASS_ENSURE_OUTSIDE,
                 graphics_queue_access: QUEUE_ACCESS_ALLOW,
@@ -622,27 +634,32 @@ impl RenderTargetFrame for UnityFrame {
 }
 
 #[derive(Debug)]
-pub struct UnityTarget;
+pub struct UnityTarget {
+    pub width: u32,
+    pub height: u32,
+    pub built: Mutex<Option<wgpu::TextureFormat>>,
+}
 
 impl RenderTarget for UnityTarget {
     type Frame = UnityFrame;
 
-    fn resize(&mut self, _: &wgpu::Device, _: u32, _: u32) {}
+    fn resize(&mut self, _: &wgpu::Device, width: u32, height: u32) {
+        self.width = width;
+        self.height = height;
+    }
 
     fn format(&self) -> wgpu::TextureFormat {
-        FRAME
-            .lock()
-            .unwrap()
-            .as_ref()
-            .map_or(wgpu::TextureFormat::Rgba8Unorm, |t| t.format())
+        let frame = FRAME.lock().unwrap().as_ref().map(|t| t.format());
+        *self.built.lock().unwrap() = frame;
+        frame.unwrap_or(wgpu::TextureFormat::Rgba8Unorm)
     }
 
     fn width(&self) -> u32 {
-        FRAME.lock().unwrap().as_ref().map_or(1, |t| t.width())
+        self.width
     }
 
     fn height(&self) -> u32 {
-        FRAME.lock().unwrap().as_ref().map_or(1, |t| t.height())
+        self.height
     }
 
     fn get_next_texture(&mut self) -> Option<UnityFrame> {
@@ -678,29 +695,42 @@ fn texture_format(format: vk::Format) -> Option<wgpu::TextureFormat> {
     })
 }
 
-#[repr(C)]
 pub struct Dv2rFrame {
     render_buffer: *mut c_void,
-    count: i32,
-    movies: *const *mut Movie,
+    players: Vec<(Arc<Mutex<ruffle_core::Player>>, f32)>,
+}
+
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dv2r_frame(render_buffer: *mut c_void, movies: *const *mut Movie, count: i32) -> *mut Dv2rFrame {
+    let players = (0..count.max(0) as usize)
+        .map(|i| unsafe { *movies.add(i) })
+        .filter(|m| !m.is_null())
+        .map(|m| unsafe { ((*m).player.clone(), (*m).desktop_aspect) })
+        .collect();
+    Box::into_raw(Box::new(Dv2rFrame { render_buffer, players }))
 }
 
 unsafe extern "C" fn render(event: i32, data: *mut c_void) {
-    let data = data as usize;
-    if std::panic::catch_unwind(|| unsafe { render_frame(event, data as *mut c_void) }).is_err() {
+    if data.is_null() {
+        return;
+    }
+    if event == EVENT.load(Ordering::SeqCst) {
+        unsafe { access_target(&*(data as *const Dv2rFrame)) };
+        return;
+    }
+    let frame = unsafe { Box::from_raw(data as *mut Dv2rFrame) };
+    if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe { render_frame(event, &frame) })).is_err() {
         *FRAME.lock().unwrap_or_else(|e| e.into_inner()) = None;
         eprintln!("[dv2ruffle] the movie render panicked; frame skipped");
     }
 }
 
-unsafe fn render_frame(event: i32, data: *mut c_void) {
-    if event != EVENT.load(Ordering::SeqCst) || data.is_null() {
+unsafe fn access_target(frame: &Dv2rFrame) {
+    let vulkan = VULKAN.load(Ordering::SeqCst);
+    *TARGET.lock().unwrap() = None;
+    if vulkan.is_null() || GPU.get().is_none() {
         return;
     }
-    let (Some(descriptors), vulkan) = (GPU.get(), VULKAN.load(Ordering::SeqCst)) else {
-        return;
-    };
-    let frame = unsafe { &*(data as *const Dv2rFrame) };
     let mut image: UnityVulkanImage = unsafe { std::mem::zeroed() };
     if !unsafe {
         ((*vulkan).access_render_buffer_texture)(
@@ -716,13 +746,23 @@ unsafe fn render_frame(event: i32, data: *mut c_void) {
         eprintln!("[dv2ruffle] no image for render buffer {:?}", frame.render_buffer);
         return;
     }
-    let Some(format) = texture_format(image.format) else {
-        eprintln!("[dv2ruffle] colour target format {:?} not handled", image.format);
+    *TARGET.lock().unwrap() = Some((image.image, image.format, image.extent));
+}
+
+unsafe fn render_frame(event: i32, frame: &Dv2rFrame) {
+    if event != EVENT.load(Ordering::SeqCst) + 1 {
+        return;
+    }
+    let (Some(descriptors), Some((raw, image_format, extent))) = (GPU.get(), TARGET.lock().unwrap().take()) else {
+        return;
+    };
+    let Some(format) = texture_format(image_format) else {
+        eprintln!("[dv2ruffle] colour target format {:?} not handled", image_format);
         return;
     };
     let size = wgpu::Extent3d {
-        width: image.extent.width,
-        height: image.extent.height,
+        width: extent.width,
+        height: extent.height,
         depth_or_array_layers: 1,
     };
     let Some(hal_device) = (unsafe { descriptors.device.as_hal::<Vulkan>() }) else {
@@ -730,7 +770,7 @@ unsafe fn render_frame(event: i32, data: *mut c_void) {
     };
     let hal_texture = unsafe {
         hal_device.texture_from_raw(
-            image.image,
+            raw,
             &hal::TextureDescriptor {
                 label: Some("Unity colour target"),
                 size,
@@ -770,11 +810,16 @@ unsafe fn render_frame(event: i32, data: *mut c_void) {
         )
     };
     *FRAME.lock().unwrap() = Some(texture);
-    for i in 0..frame.count as usize {
-        let movie = unsafe { *frame.movies.add(i) };
-        if !movie.is_null() {
-            unsafe { (*movie).render_into_frame(size.width, size.height, format) };
+    for (player, aspect) in &frame.players {
+        let mut p = player.lock().unwrap();
+        if let Some(r) = <dyn std::any::Any>::downcast_mut::<WgpuRenderBackend<UnityTarget>>(p.renderer_mut()) {
+            if *r.target().built.lock().unwrap() != Some(format) {
+                let viewport = r.viewport_dimensions();
+                r.set_viewport_dimensions(viewport);
+            }
         }
+        p.set_gfx_view(size.width, size.height, *aspect);
+        p.render();
     }
     *FRAME.lock().unwrap() = None;
 }
