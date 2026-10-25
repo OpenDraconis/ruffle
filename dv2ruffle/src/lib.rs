@@ -141,7 +141,9 @@ pub unsafe extern "C" fn dv2r_open_on_unity(def: *const Def) -> *mut Movie {
     // CGFxPlayStreamManager::Initialize @10810d0 decomp
     renderer.set_shared_texture_pool(POOL.get_or_init(Default::default).clone());
     renderer.set_external_images(Arc::new(images::Images(descriptors, Default::default())));
-    build(def, 1, 1, Box::new(renderer))
+    // CGFxPlayStream::Notifyloaded @107e6c0, GFxMovieDefImpl::CreateInstance @ec7fe0 decomp
+    let (width, height) = (def.movie.width().to_pixels() as u32, def.movie.height().to_pixels() as u32);
+    build(def, width, height, Box::new(renderer))
 }
 
 unsafe fn text(p: *const c_char) -> String {
