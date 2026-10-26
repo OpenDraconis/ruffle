@@ -3550,9 +3550,12 @@ impl<'gc, 'a> MovieClipShared<'gc> {
         reader: &mut SwfStream<'a>,
     ) -> Result<(), Error> {
         let image = reader.read_define_external_image()?;
-        let Some(url) = self.external_url(image.file_name) else {
+        let Some(mut url) = self.external_url(image.file_name) else {
             return Ok(());
         };
+        if !image.export_name.is_empty() {
+            url.push_str(&format!("#dv2-resource-{:p}-{}", self.movie().as_ptr(), image.id));
+        }
         let bitmap = Gc::new(
             context.gc(),
             BitmapCharacter::new(CompressedBitmap::External {
@@ -3564,6 +3567,11 @@ impl<'gc, 'a> MovieClipShared<'gc> {
         let _ = bitmap.bitmap_handle(context.renderer);
         self.library_mut(context)
             .register_character(image.id, Character::Bitmap(bitmap));
+        if !image.export_name.is_empty() {
+            let name = image.export_name.decode(reader.encoding());
+            let name = AvmString::new(context.gc(), name);
+            self.library_mut(context).register_export(image.id, name);
+        }
         Ok(())
     }
 

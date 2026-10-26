@@ -2563,6 +2563,18 @@ impl Player {
         })
     }
 
+    // CGFxPlayStream::ReplaceTexture @107e7d0, CGFxPlayStream::AttachMovie @107eae0 decomp
+    pub fn named_bitmap(&mut self, name: &str) -> Option<(ruffle_render::bitmap::BitmapHandle, u32, u32)> {
+        self.mutate_with_update_context(|context| {
+            let root = context.stage.root_clip()?;
+            let name = crate::string::WString::from_utf8(name);
+            let Some((_, crate::character::Character::Bitmap(bitmap))) = context.library
+                .library_for_movie(root.movie())?.character_by_export_name(&name) else { return None; };
+            let size = bitmap.compressed().size();
+            Some((bitmap.bitmap_handle(context.renderer).ok()?, size.width, size.height))
+        })
+    }
+
     // GFxMovieRoot::Invoke @f2a4b0, GFxSprite::Invoke @f3ff10, GAS_Invoke @f0af00, GFxMovieRoot::ASValue2GFxValue @f27670 decomp
     pub fn invoke(&mut self, method: &str, args: Vec<ExternalValue>) -> Option<String> {
         self.mutate_with_update_context(|context| {

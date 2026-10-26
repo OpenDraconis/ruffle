@@ -397,3 +397,31 @@ pub unsafe extern "C" fn dv2r_poll(m: *mut Movie, buffer: *mut u8, len: usize) -
     unsafe { std::ptr::copy_nonoverlapping(bytes.as_ptr(), buffer, n) };
     n as i32
 }
+
+// CGFxPlayStream::AttachMovie @107eae0 decomp
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dv2r_resource_size(m: *mut Movie, name: *const c_char, width: *mut u32, height: *mut u32) -> bool {
+    if m.is_null() || name.is_null() || width.is_null() || height.is_null() { return false; }
+    let m = unsafe { &mut *m };
+    let Some((_, w, h)) = m.player.lock().unwrap().named_bitmap(&unsafe { text(name) }) else { return false; };
+    unsafe { *width = w; *height = h; }
+    true
+}
+
+// CGFxPlayStream::ReplaceTexture @107e7d0, CGFxPlayStream::Advance @107e430 decomp
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn dv2r_replace_image(m: *mut Movie, name: *const c_char, width: u32, height: u32, rgba: *const u8, length: usize) -> bool {
+    if m.is_null() || name.is_null() || rgba.is_null() || width == 0 || height == 0
+        || (width as usize).checked_mul(height as usize).and_then(|n| n.checked_mul(4)) != Some(length) { return false; }
+    let m = unsafe { &mut *m };
+    let mut p = m.player.lock().unwrap();
+    let Some((handle, _, _)) = p.named_bitmap(&unsafe { text(name) }) else { return false; };
+    let renderer = p.renderer_mut();
+    let descriptors = if let Some(renderer) = <dyn Any>::downcast_mut::<WgpuRenderBackend<unity::UnityTarget>>(renderer) {
+        renderer.descriptors().clone()
+    } else if let Some(renderer) = <dyn Any>::downcast_mut::<WgpuRenderBackend<TextureTarget>>(renderer) {
+        renderer.descriptors().clone()
+    } else { return false; };
+    if width > descriptors.device.limits().max_texture_dimension_2d || height > descriptors.device.limits().max_texture_dimension_2d { return false; }
+    ruffle_render_wgpu::as_texture(&handle).replace_rgba(&descriptors, width, height, unsafe { std::slice::from_raw_parts(rgba, length) })
+}
