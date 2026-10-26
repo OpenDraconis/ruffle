@@ -757,7 +757,10 @@ pub trait TInteractiveObject<'gc>:
         event: ClipEvent,
     ) -> bool {
         // Event handlers are supported only by SWF6+.
-        if self.as_displayobject().movie().version() < 6 {
+        // GFxMovieRoot::ProcessLoadMovieClip @f2c320 decomp
+        if self.as_displayobject().movie().version() < 6
+            && !self.as_displayobject().movie().url().starts_with("img://")
+        {
             return false;
         }
 

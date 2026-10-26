@@ -2948,7 +2948,8 @@ impl<'gc> TInteractiveObject<'gc> for MovieClip<'gc> {
         }
 
         let mut handled = ClipEventResult::NotHandled;
-        if self.0.movie().version() >= 5
+        // GFxMovieRoot::ProcessLoadMovieClip @f2c320 decomp
+        if (self.0.movie().version() >= 5 || self.0.movie().url().starts_with("img://"))
             && let Some(object) = self.0.object1.get()
         {
             if let Some(flag) = event.flag() {
