@@ -72,12 +72,26 @@ pub enum TrivialBlend {
     Add,
     Subtract,
     Screen,
+    Multiply,
 }
 
 impl TrivialBlend {
     pub fn blend_state(self) -> wgpu::BlendState {
         // out = <src_factor> * src <operation> <dst_factor> * dst
         match self {
+            // GRendererD3D9Impl::ApplyBlendMode @e3d160, GRendererD3D9Impl::ApplyColor @e3d3e0 decomp
+            TrivialBlend::Multiply => wgpu::BlendState {
+                color: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::Dst,
+                    dst_factor: wgpu::BlendFactor::OneMinusSrcAlpha,
+                    operation: wgpu::BlendOperation::Add,
+                },
+                alpha: wgpu::BlendComponent {
+                    src_factor: wgpu::BlendFactor::Dst,
+                    dst_factor: wgpu::BlendFactor::Zero,
+                    operation: wgpu::BlendOperation::Add,
+                },
+            },
             TrivialBlend::Normal => wgpu::BlendState::PREMULTIPLIED_ALPHA_BLENDING,
             TrivialBlend::Add => wgpu::BlendState {
                 color: wgpu::BlendComponent {

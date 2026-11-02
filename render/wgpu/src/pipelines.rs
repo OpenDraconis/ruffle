@@ -44,6 +44,8 @@ pub struct ShapePipeline {
 #[derive(Debug)]
 pub struct Pipelines {
     pub color: ShapePipeline,
+    pub color_multiply: ShapePipeline,
+    pub gradients_multiply: ShapePipeline,
     pub lines: ShapePipeline,
     /// Renders a bitmap without any blending, and does
     /// not write to the alpha channel. This is used for
@@ -107,6 +109,19 @@ impl Pipelines {
             PrimitiveTopology::TriangleList,
         );
 
+        let color_multiply_pipelines = create_shape_pipeline(
+            "Color multiply",
+            device,
+            format,
+            &shaders.color_shader,
+            msaa_sample_count,
+            &VERTEX_BUFFERS_DESCRIPTION_COLOR,
+            &colort_bindings,
+            TrivialBlend::Multiply.blend_state(),
+            0,
+            PrimitiveTopology::TriangleList,
+        );
+
         let lines_pipelines = create_shape_pipeline(
             "Lines",
             device,
@@ -135,6 +150,19 @@ impl Pipelines {
             &VERTEX_BUFFERS_DESCRIPTION_POS_UV,
             &gradient_bindings,
             BlendState::PREMULTIPLIED_ALPHA_BLENDING,
+            0,
+            PrimitiveTopology::TriangleList,
+        );
+
+        let gradient_multiply_pipeline = create_shape_pipeline(
+            "Gradient multiply",
+            device,
+            format,
+            &shaders.gradient_shader,
+            msaa_sample_count,
+            &VERTEX_BUFFERS_DESCRIPTION_POS_UV,
+            &gradient_bindings,
+            TrivialBlend::Multiply.blend_state(),
             0,
             PrimitiveTopology::TriangleList,
         );
@@ -269,6 +297,8 @@ impl Pipelines {
 
         Self {
             color: color_pipelines,
+            color_multiply: color_multiply_pipelines,
+            gradients_multiply: gradient_multiply_pipeline,
             lines: lines_pipelines,
             bitmap: bitmap_pipelines,
             bitmap_straight: bitmap_straight_pipelines,

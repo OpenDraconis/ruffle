@@ -44,10 +44,12 @@ pub enum DrawCommand {
     },
     DrawColor {
         draw_offsets: DrawOffsets,
+        multiply: bool,
     },
     RenderGradient {
         bind_group: wgpu::BindGroup,
         draw_offsets: DrawOffsets,
+        multiply: bool,
     },
     DrawLine {
         draw_offsets: DrawOffsets,
@@ -72,11 +74,13 @@ impl DrawCommand {
             (
                 DrawCommand::DrawColor {
                     draw_offsets: self_offsets,
+                    multiply: self_multiply,
                 },
                 DrawCommand::DrawColor {
                     draw_offsets: other_offsets,
+                    multiply: other_multiply,
                 },
-            ) => self_offsets.try_merge(other_offsets),
+            ) if self_multiply == other_multiply => self_offsets.try_merge(other_offsets),
             (
                 DrawCommand::DrawLine {
                     draw_offsets: self_offsets,
@@ -89,12 +93,16 @@ impl DrawCommand {
                 DrawCommand::RenderGradient {
                     bind_group: self_bind_group,
                     draw_offsets: self_offsets,
+                    multiply: self_multiply,
                 },
                 DrawCommand::RenderGradient {
                     bind_group: other_bind_group,
                     draw_offsets: other_offsets,
+                    multiply: other_multiply,
                 },
-            ) if self_bind_group == other_bind_group => self_offsets.try_merge(other_offsets),
+            ) if self_bind_group == other_bind_group && self_multiply == other_multiply => {
+                self_offsets.try_merge(other_offsets)
+            }
             (
                 DrawCommand::RenderTexture {
                     _texture: self_texture,
@@ -199,7 +207,10 @@ impl<'encoder> CommandRenderer<'encoder> {
                 *straight_alpha,
                 draw_offsets,
             ),
-            DrawCommand::DrawColor { draw_offsets } => self.draw_color(render_pass, draw_offsets),
+            DrawCommand::DrawColor {
+                draw_offsets,
+                multiply,
+            } => self.draw_color(render_pass, draw_offsets, *multiply),
             DrawCommand::DrawLine { draw_offsets } => self.draw_lines(render_pass, draw_offsets),
             DrawCommand::SetMask(mask_state) => self.set_mask_state(*mask_state),
             DrawCommand::RenderAlphaMask {
@@ -211,7 +222,8 @@ impl<'encoder> CommandRenderer<'encoder> {
             DrawCommand::RenderGradient {
                 bind_group,
                 draw_offsets,
-            } => self.draw_gradient(render_pass, bind_group, draw_offsets),
+                multiply,
+            } => self.draw_gradient(render_pass, bind_group, draw_offsets, *multiply),
         }
     }
 
@@ -283,10 +295,7 @@ impl<'encoder> CommandRenderer<'encoder> {
                 self.set_pipeline(render_pass, &self.pipelines.bitmap_opaque);
             }
             (false, false) => {
-                self.set_pipeline(
-                    render_pass,
-                    bitmap[blend_mode].stencilless_pipeline(),
-                );
+                self.set_pipeline(render_pass, bitmap[blend_mode].stencilless_pipeline());
             }
         }
 
@@ -300,13 +309,19 @@ impl<'encoder> CommandRenderer<'encoder> {
         render_pass: &mut wgpu::RenderPass<'encoder>,
         bind_group: &'encoder wgpu::BindGroup,
         draw_offsets: &'encoder DrawOffsets,
+        multiply: bool,
     ) {
+        let pipelines = if multiply {
+            &self.pipelines.gradients_multiply
+        } else {
+            &self.pipelines.gradients
+        };
         self.set_pipeline(
             render_pass,
             if self.needs_stencil {
-                self.pipelines.gradients.pipeline_for(self.mask_state.mode)
+                pipelines.pipeline_for(self.mask_state.mode)
             } else {
-                self.pipelines.gradients.stencilless_pipeline()
+                pipelines.stencilless_pipeline()
             },
         );
 
@@ -341,13 +356,19 @@ impl<'encoder> CommandRenderer<'encoder> {
         &mut self,
         render_pass: &mut wgpu::RenderPass<'encoder>,
         draw_offsets: &'encoder DrawOffsets,
+        multiply: bool,
     ) {
+        let pipelines = if multiply {
+            &self.pipelines.color_multiply
+        } else {
+            &self.pipelines.color
+        };
         self.set_pipeline(
             render_pass,
             if self.needs_stencil {
-                self.pipelines.color.pipeline_for(self.mask_state.mode)
+                pipelines.pipeline_for(self.mask_state.mode)
             } else {
-                self.pipelines.color.stencilless_pipeline()
+                pipelines.stencilless_pipeline()
             },
         );
 

@@ -11,7 +11,7 @@ use crate::surface::target::{CommandTarget, PoolOrArcTexture};
 use crate::{Descriptors, PosUvVertex, as_texture};
 use ruffle_render::backend::ShapeHandle;
 use ruffle_render::bitmap::{BitmapHandle, PixelRegion, PixelSnapping};
-use ruffle_render::commands::{CommandHandler, CommandList, RenderBlendMode};
+use ruffle_render::commands::{Command, CommandHandler, CommandList, RenderBlendMode};
 use ruffle_render::lines::{emulate_line, emulate_line_rect};
 use ruffle_render::matrix::Matrix;
 use ruffle_render::quality::StageQuality;
@@ -77,6 +77,7 @@ struct WgpuCommandHandler<'encoder, 'global: 'encoder> {
     chunk_buffer_builder: ChunkBufferBuilder,
     needs_stencil: bool,
     mask_state: MaskState,
+    multiply: bool,
 }
 
 impl<'encoder, 'global: 'encoder> WgpuCommandHandler<'encoder, 'global> {
@@ -118,6 +119,7 @@ impl<'encoder, 'global: 'encoder> WgpuCommandHandler<'encoder, 'global> {
             chunk_buffer_builder,
             needs_stencil: false,
             mask_state: MaskState::empty(),
+            multiply: false,
         }
     }
 
@@ -206,6 +208,18 @@ impl<'encoder, 'global: 'encoder> WgpuCommandHandler<'encoder, 'global> {
 
 impl CommandHandler for WgpuCommandHandler<'_, '_> {
     fn blend(&mut self, commands: CommandList, blend_mode: RenderBlendMode) {
+        // GRendererD3D9Impl::PushBlendMode @e401e0 decomp
+        if matches!(blend_mode, RenderBlendMode::Builtin(BlendMode::Multiply))
+            && commands
+                .commands
+                .iter()
+                .all(|c| matches!(c, Command::RenderShape { .. } | Command::DrawRect { .. }))
+        {
+            let outer = mem::replace(&mut self.multiply, true);
+            commands.execute(self);
+            self.multiply = outer;
+            return;
+        }
         let surface = Surface::new(
             self.descriptors,
             self.quality,
@@ -445,24 +459,35 @@ impl CommandHandler for WgpuCommandHandler<'_, '_> {
             };
             match &draw.draw_type {
                 DrawType::Color => {
+                    let multiply = self.multiply;
                     self.add_to_current(&transform, &mut instance, vertices, |draw_offsets| {
-                        DrawCommand::DrawColor { draw_offsets }
+                        DrawCommand::DrawColor {
+                            draw_offsets,
+                            multiply,
+                        }
                     });
                 }
                 DrawType::Gradient { bind_group } => {
+                    let multiply = self.multiply;
                     self.add_to_current(&transform, &mut instance, vertices, |draw_offsets| {
                         DrawCommand::RenderGradient {
                             bind_group: bind_group.clone(),
                             draw_offsets,
+                            multiply,
                         }
                     });
                 }
                 DrawType::Bitmap { binds } => {
+                    let blend_mode = if self.multiply {
+                        TrivialBlend::Multiply
+                    } else {
+                        TrivialBlend::Normal
+                    };
                     self.add_to_current(&transform, &mut instance, vertices, |draw_offsets| {
                         DrawCommand::RenderTexture {
                             _texture: None,
                             binds: binds.bind_group.clone(),
-                            blend_mode: TrivialBlend::Normal,
+                            blend_mode,
                             render_stage3d: false,
                             straight_alpha: binds.straight_alpha,
                             draw_offsets,
@@ -474,6 +499,7 @@ impl CommandHandler for WgpuCommandHandler<'_, '_> {
     }
 
     fn draw_rect(&mut self, color: Color, matrix: Matrix) {
+        let multiply = self.multiply;
         self.add_to_current(
             &Transform {
                 matrix,
@@ -483,7 +509,10 @@ impl CommandHandler for WgpuCommandHandler<'_, '_> {
             },
             &mut None,
             DrawVertices::PosColorQuad,
-            |draw_offsets| DrawCommand::DrawColor { draw_offsets },
+            |draw_offsets| DrawCommand::DrawColor {
+                draw_offsets,
+                multiply,
+            },
         );
     }
 
