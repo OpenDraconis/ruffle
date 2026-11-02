@@ -19,6 +19,8 @@ use std::cell::{Cell, OnceCell};
 use std::sync::Arc;
 use swf::GradientSpread;
 pub use wgpu;
+
+pub static OFFSCREEN_BLENDS: [[std::sync::atomic::AtomicU32; 15]; 2] = [const { [const { std::sync::atomic::AtomicU32::new(0) }; 15] }; 2];
 pub use wgpu_profiler;
 
 type Error = Box<dyn std::error::Error>;

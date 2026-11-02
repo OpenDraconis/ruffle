@@ -220,6 +220,16 @@ impl CommandHandler for WgpuCommandHandler<'_, '_> {
             self.multiply = outer;
             return;
         }
+        if let RenderBlendMode::Builtin(mode) = blend_mode {
+            let shapes = commands
+                .commands
+                .iter()
+                .all(|c| matches!(c, Command::RenderShape { .. } | Command::DrawRect { .. }));
+            crate::OFFSCREEN_BLENDS[0][mode as usize]
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            crate::OFFSCREEN_BLENDS[1][mode as usize]
+                .fetch_add(u32::from(shapes), std::sync::atomic::Ordering::Relaxed);
+        }
         let surface = Surface::new(
             self.descriptors,
             self.quality,
