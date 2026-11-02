@@ -19,3 +19,7 @@ ruffle_render_wgpu = { path = "../render/wgpu" }
 ash = "0.38.0"
 ruffle_render = { path = "../render" }
 url = { workspace = true }
+
+[dev-dependencies]
+swf = { path = "../swf" }
+wgpu = { workspace = true, features = ["counters"] }

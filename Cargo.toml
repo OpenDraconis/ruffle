@@ -1,4 +1,5 @@
 [workspace]
+exclude = ["vendor/wgpu-hal"]
 members = [
     "core",
     "core/macros",
@@ -207,3 +208,6 @@ lto = "off"
 incremental = true
 # Right between the defaults of 16 and 256, for crate fragment caching.
 codegen-units = 64
+
+[patch.crates-io]
+wgpu-hal = { path = "vendor/wgpu-hal" }
