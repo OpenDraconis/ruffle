@@ -36,6 +36,7 @@ mod semaphore_list;
 mod swapchain;
 
 pub use adapter::PhysicalDeviceFeatures;
+pub use command::LIVE_COMMAND_BUFFERS;
 
 use alloc::{boxed::Box, ffi::CString, sync::Arc, vec::Vec};
 use core::{borrow::Borrow, ffi::CStr, fmt, marker::PhantomData, mem, num::NonZeroU32};
@@ -1106,6 +1107,10 @@ impl Drop for CommandEncoder {
             // fields.
             self.device.raw.destroy_command_pool(self.raw, None);
         }
+        LIVE_COMMAND_BUFFERS.fetch_sub(
+            self.free.len() + self.discarded.len() + usize::from(self.active != vk::CommandBuffer::null()),
+            core::sync::atomic::Ordering::Relaxed,
+        );
 
         for (_, fb) in self.framebuffers.drain() {
             unsafe { self.device.raw.destroy_framebuffer(fb, None) };

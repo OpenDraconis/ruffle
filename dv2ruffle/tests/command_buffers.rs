@@ -1,4 +1,6 @@
 use ruffle_render_wgpu::wgpu;
+use std::sync::atomic::Ordering;
+use wgpu::hal::vulkan::LIVE_COMMAND_BUFFERS;
 
 const ENCODERS: usize = 48;
 const PASSES: usize = 300;
@@ -84,6 +86,11 @@ fn encoders_give_command_buffers_back_after_a_frame_with_many_passes() {
     round(&device, &queue, &view, PASSES);
     round(&device, &queue, &view, 1);
     let held = heap_in_use().saturating_sub(before);
+    let live = LIVE_COMMAND_BUFFERS.load(Ordering::Relaxed);
+    assert!(
+        live > 0 && live <= 2 * ENCODERS * 16,
+        "{live} command buffers live after the heavy frame"
+    );
 
     assert!(
         held < HELD_LIMIT,

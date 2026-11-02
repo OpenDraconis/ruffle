@@ -5,6 +5,8 @@ use core::{mem, ops::Range};
 use hashbrown::hash_map::Entry;
 
 const ALLOCATION_GRANULARITY: u32 = 16;
+
+pub static LIVE_COMMAND_BUFFERS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 const DST_IMAGE_LAYOUT: vk::ImageLayout = vk::ImageLayout::TRANSFER_DST_OPTIMAL;
 
 impl super::Texture {
@@ -130,6 +132,7 @@ impl crate::CommandEncoder for super::CommandEncoder {
                     .allocate_command_buffers(&vk_info)
                     .map_err(super::map_host_device_oom_err)?
             };
+            LIVE_COMMAND_BUFFERS.fetch_add(cmd_buf_vec.len(), core::sync::atomic::Ordering::Relaxed);
             self.free.extend(cmd_buf_vec);
         }
         let raw = self.free.pop().unwrap();
@@ -184,6 +187,7 @@ impl crate::CommandEncoder for super::CommandEncoder {
         if self.free.len() > ALLOCATION_GRANULARITY as usize {
             let surplus = self.free.split_off(ALLOCATION_GRANULARITY as usize);
             unsafe { self.device.raw.free_command_buffers(self.raw, &surplus) };
+            LIVE_COMMAND_BUFFERS.fetch_sub(surplus.len(), core::sync::atomic::Ordering::Relaxed);
             unsafe {
                 self.device
                     .raw

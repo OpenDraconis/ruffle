@@ -719,10 +719,12 @@ unsafe extern "C" fn render(event: i32, data: *mut c_void) {
         return;
     }
     let frame = unsafe { Box::from_raw(data as *mut Dv2rFrame) };
+    let start = crate::probe::start();
     if std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| unsafe { render_frame(event, &frame) })).is_err() {
         *FRAME.lock().unwrap_or_else(|e| e.into_inner()) = None;
         eprintln!("[dv2ruffle] the movie render panicked; frame skipped");
     }
+    crate::probe::render(start);
 }
 
 unsafe fn access_target(frame: &Dv2rFrame) {

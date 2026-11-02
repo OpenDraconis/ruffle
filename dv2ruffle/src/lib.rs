@@ -1,5 +1,6 @@
 mod fonts;
 mod images;
+mod probe;
 mod unity;
 
 use std::any::Any;
@@ -204,10 +205,13 @@ pub unsafe extern "C" fn dv2r_set_view(m: *mut Movie, width: u32, height: u32) {
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dv2r_advance(m: *mut Movie, seconds: f64, catch_up: u32) {
     let m = unsafe { &mut *m };
+    let start = probe::start();
     m.executor.run();
     let mut p = m.player.lock().unwrap();
     p.preload(&mut ExecutionLimit::none());
     p.advance(FloatDuration::from_secs(seconds), catch_up);
+    drop(p);
+    probe::advance(start);
 }
 
 // CGFxPlayStream::Invoke @107e990 decomp
