@@ -2313,6 +2313,24 @@ impl Player {
         Ok(())
     }
 
+    // CGFxPlayStreamManager::AddFontsFromMovie @1080560 decomp
+    pub fn add_font_templates(&mut self, templates: &[std::sync::Arc<crate::font::FontTemplate>]) {
+        self.mutate_with_update_context(|context| {
+            let fonts = templates
+                .iter()
+                .map(|template| {
+                    crate::font::Font::from_template(
+                        context.gc(),
+                        context.renderer,
+                        template,
+                        crate::font::FontType::Embedded,
+                    )
+                })
+                .collect::<Vec<_>>();
+            context.library.add_font_lib_fonts(fonts);
+        });
+    }
+
     // CGFxPlayStreamManager::AddFontMapping @10804f0, GFxFontMap::MapFont @eb4e80 decomp
     pub fn add_font_mapping(&mut self, font_id: &str, font_name: &str, flags: u8) -> bool {
         self.mutate_with_update_context(|context| {
