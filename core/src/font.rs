@@ -15,7 +15,7 @@ pub use font_like::{EvalParameters, FontLike, GlyphResolution};
 pub use font_renderer::FontRenderer;
 pub use font_renderer::FontRendererGlyphSource;
 pub use font_set::FontSet;
-pub use glyph::Glyph;
+pub use glyph::{Glyph, SwfGlyphTemplate};
 pub use text_render_settings::TextRenderSettings;
 
 use crate::font::glyph::GlyphRef;
@@ -321,6 +321,65 @@ struct FontData {
     has_layout: bool,
 }
 
+#[derive(Debug)]
+pub struct FontTemplate {
+    glyphs: Vec<SwfGlyphTemplate>,
+    code_point_to_glyph: fnv::FnvHashMap<u16, usize>,
+    kerning_pairs: fnv::FnvHashMap<(u16, u16), Twips>,
+    metrics: FontMetrics,
+    descriptor: FontDescriptor,
+    has_layout: bool,
+}
+
+impl FontTemplate {
+    pub fn from_swf_tag(tag: swf::Font, encoding: &'static swf::Encoding) -> Self {
+        let mut code_point_to_glyph = fnv::FnvHashMap::default();
+        let descriptor = FontDescriptor::from_swf_tag(&tag, encoding);
+        let (ascent, descent, leading) = if let Some(layout) = &tag.layout {
+            (layout.ascent as i32, layout.descent as i32, layout.leading)
+        } else {
+            (0, 0, 0)
+        };
+        let has_layout = tag.layout.is_some();
+        let kerning_pairs = tag
+            .layout
+            .as_ref()
+            .map(|layout| {
+                layout
+                    .kerning
+                    .iter()
+                    .map(|kerning| ((kerning.left_code, kerning.right_code), kerning.adjustment))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let scale = if tag.version >= 3 { 20480.0 } else { 1024.0 };
+        let glyphs = tag
+            .glyphs
+            .into_iter()
+            .enumerate()
+            .map(|(index, swf_glyph)| {
+                let code = swf_glyph.code;
+                let character = char::from_u32(code as u32).unwrap_or(char::REPLACEMENT_CHARACTER);
+                code_point_to_glyph.insert(code, index);
+                SwfGlyphTemplate::new(character, swf_glyph)
+            })
+            .collect();
+        Self {
+            glyphs,
+            code_point_to_glyph,
+            kerning_pairs,
+            metrics: FontMetrics {
+                scale,
+                ascent,
+                descent,
+                leading,
+            },
+            descriptor,
+            has_layout,
+        }
+    }
+}
+
 impl<'gc> Font<'gc> {
     pub fn from_font_file(
         gc_context: &Mutation<'gc>,
@@ -350,30 +409,25 @@ impl<'gc> Font<'gc> {
         encoding: &'static swf::Encoding,
         font_type: FontType,
     ) -> Font<'gc> {
-        let mut code_point_to_glyph = fnv::FnvHashMap::default();
+        let template = FontTemplate::from_swf_tag(tag, encoding);
+        Font::from_template(gc_context, renderer, &template, font_type)
+    }
 
-        let descriptor = FontDescriptor::from_swf_tag(&tag, encoding);
-        let (ascent, descent, leading) = if let Some(layout) = &tag.layout {
-            (layout.ascent as i32, layout.descent as i32, layout.leading)
-        } else {
-            (0, 0, 0)
-        };
-
-        let glyphs: Vec<Glyph> = tag
+    // CGFxPlayStreamManager::AddFontsFromMovie @1080560 decomp
+    pub fn from_template(
+        gc_context: &Mutation<'gc>,
+        renderer: &mut dyn RenderBackend,
+        template: &FontTemplate,
+        font_type: FontType,
+    ) -> Font<'gc> {
+        let glyphs: Vec<Glyph> = template
             .glyphs
-            .into_iter()
-            .enumerate()
-            .map(|(index, swf_glyph)| {
-                let code = swf_glyph.code;
-                // TODO: Flash doesn't care whether it's a surrogate code point or not.
-                //   We should probably rethink using Rust's char for Flash characters.
-                let character = char::from_u32(code as u32).unwrap_or(char::REPLACEMENT_CHARACTER);
-                code_point_to_glyph.insert(code, index);
-
-                let glyph = Glyph::from_swf(character, swf_glyph);
+            .iter()
+            .map(|template_glyph| {
+                let glyph = Glyph::from_template(template_glyph);
 
                 // Eager-load ASCII characters.
-                if code < 128 {
+                if (template_glyph.character() as u32) < 128 {
                     glyph.glyph_render_data(renderer);
                 }
 
@@ -381,19 +435,6 @@ impl<'gc> Font<'gc> {
             })
             .collect();
 
-        let kerning_pairs: fnv::FnvHashMap<(u16, u16), Twips> = if let Some(layout) = &tag.layout {
-            layout
-                .kerning
-                .iter()
-                .map(|kerning| ((kerning.left_code, kerning.right_code), kerning.adjustment))
-                .collect()
-        } else {
-            fnv::FnvHashMap::default()
-        };
-
-        // DefineFont3 stores coordinates at 20x the scale of DefineFont1/2.
-        // (SWF19 p.164)
-        let scale = if tag.version >= 3 { 20480.0 } else { 1024.0 };
         Font(Gc::new(
             gc_context,
             FontData {
@@ -402,19 +443,14 @@ impl<'gc> Font<'gc> {
                 } else {
                     GlyphSource::Memory {
                         glyphs,
-                        code_point_to_glyph,
-                        kerning_pairs,
-                        metrics: FontMetrics {
-                            scale,
-                            ascent,
-                            descent,
-                            leading,
-                        },
+                        code_point_to_glyph: template.code_point_to_glyph.clone(),
+                        kerning_pairs: template.kerning_pairs.clone(),
+                        metrics: template.metrics,
                     }
                 },
-                descriptor,
+                descriptor: template.descriptor.clone(),
                 font_type,
-                has_layout: tag.layout.is_some(),
+                has_layout: template.has_layout,
             },
         ))
     }
