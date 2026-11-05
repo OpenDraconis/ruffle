@@ -4,7 +4,7 @@ use ash::vk;
 use core::{mem, ops::Range};
 use hashbrown::hash_map::Entry;
 
-const ALLOCATION_GRANULARITY: u32 = 16;
+const ALLOCATION_GRANULARITY: u32 = 1;
 
 pub static LIVE_COMMAND_BUFFERS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 const DST_IMAGE_LAYOUT: vk::ImageLayout = vk::ImageLayout::TRANSFER_DST_OPTIMAL;
