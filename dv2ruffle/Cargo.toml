@@ -10,7 +10,7 @@ version.workspace = true
 workspace = true
 
 [lib]
-crate-type = ["cdylib"]
+crate-type = ["cdylib", "rlib"]
 
 [dependencies]
 futures = { workspace = true }
@@ -18,8 +18,8 @@ ruffle_core = { path = "../core", features = ["default_font"] }
 ruffle_render_wgpu = { path = "../render/wgpu" }
 ash = "0.38.0"
 ruffle_render = { path = "../render" }
+swf = { path = "../swf" }
 url = { workspace = true }
 
 [dev-dependencies]
-swf = { path = "../swf" }
 wgpu = { workspace = true, features = ["counters"] }

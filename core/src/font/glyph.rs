@@ -5,7 +5,35 @@ use crate::prelude::*;
 use ruffle_render::backend::null::NullBitmapSource;
 use ruffle_render::backend::{RenderBackend, ShapeHandle};
 use ruffle_render::transform::Transform;
-use std::cell::{Ref, RefCell};
+use std::cell::Ref;
+use std::sync::{Arc, Mutex};
+
+#[derive(Debug)]
+pub struct SharedSwfGlyph(Mutex<SwfGlyphOrShape>);
+
+unsafe impl Send for SharedSwfGlyph {}
+unsafe impl Sync for SharedSwfGlyph {}
+
+#[derive(Debug)]
+pub struct SwfGlyphTemplate {
+    character: char,
+    advance: Twips,
+    shape: Arc<SharedSwfGlyph>,
+}
+
+impl SwfGlyphTemplate {
+    pub fn character(&self) -> char {
+        self.character
+    }
+
+    pub fn new(character: char, swf_glyph: swf::Glyph) -> Self {
+        Self {
+            character,
+            advance: Twips::new(swf_glyph.advance.into()),
+            shape: Arc::new(SharedSwfGlyph(Mutex::new(SwfGlyphOrShape::Glyph(swf_glyph)))),
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 enum SwfGlyphOrShape {
@@ -70,7 +98,7 @@ impl GlyphRenderData {
 
 #[derive(Debug, Clone)]
 enum GlyphShape {
-    Swf(Box<RefCell<SwfGlyphOrShape>>),
+    Swf(Arc<SharedSwfGlyph>),
     Drawing(Box<Drawing>),
     AtlasGlyph(FontAtlasGlyph),
     None,
@@ -80,7 +108,7 @@ impl GlyphShape {
     pub fn hit_test(&self, point: Point<Twips>, local_matrix: &Matrix) -> bool {
         match self {
             GlyphShape::Swf(glyph) => {
-                let mut glyph = glyph.borrow_mut();
+                let mut glyph = glyph.0.lock().unwrap();
                 let (shape, _) = glyph.shape();
                 shape.shape_bounds.contains(point)
                     && ruffle_render::shape_utils::shape_hit_test(shape, point, local_matrix)
@@ -97,7 +125,7 @@ impl GlyphShape {
     pub fn register(&self, renderer: &mut dyn RenderBackend) -> Option<GlyphRenderData> {
         match self {
             GlyphShape::Swf(glyph) => {
-                let mut glyph = glyph.borrow_mut();
+                let mut glyph = glyph.0.lock().unwrap();
                 let (shape, handle) = glyph.shape();
                 handle.get_or_insert_with(|| {
                     renderer.register_shape((&*shape).into(), &NullBitmapSource)
@@ -151,11 +179,11 @@ impl Glyph {
         }
     }
 
-    pub fn from_swf(character: char, swf_glyph: swf::Glyph) -> Self {
+    pub fn from_template(template: &SwfGlyphTemplate) -> Self {
         Self {
-            advance: Twips::new(swf_glyph.advance.into()),
-            shape: GlyphShape::Swf(Box::new(RefCell::new(SwfGlyphOrShape::Glyph(swf_glyph)))),
-            character,
+            advance: template.advance,
+            shape: GlyphShape::Swf(template.shape.clone()),
+            character: template.character,
         }
     }
 
@@ -211,7 +239,7 @@ impl Glyph {
         if faux != 0
             && let GlyphShape::Swf(glyph) = &self.shape
         {
-            let handle = glyph.borrow_mut().faux_handle(context.renderer, faux, units_per_em);
+            let handle = glyph.0.lock().unwrap().faux_handle(context.renderer, faux, units_per_em);
             context
                 .commands
                 .render_shape(handle, context.transform_stack.transform());

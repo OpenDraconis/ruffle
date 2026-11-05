@@ -1,4 +1,6 @@
 mod fonts;
+pub use images::dv2r_set_file_opener;
+pub use fonts::{dv2r_add_fonts_from_movie, parses as font_parses};
 mod images;
 mod probe;
 mod unity;
@@ -25,7 +27,7 @@ use ruffle_render_wgpu::backend::{
 };
 use ruffle_render_wgpu::buffer_pool::TexturePool;
 use ruffle_render_wgpu::descriptors::Descriptors;
-use ruffle_render_wgpu::target::TextureTarget;
+use ruffle_render_wgpu::target::{RenderTarget, TextureTarget};
 use ruffle_render_wgpu::wgpu;
 
 type Queue = Arc<Mutex<VecDeque<String>>>;
@@ -70,6 +72,12 @@ pub struct Def {
     movie: SwfMovieData,
 }
 
+impl Def {
+    pub fn size(&self) -> (u32, u32) {
+        (self.movie.width().to_pixels() as u32, self.movie.height().to_pixels() as u32)
+    }
+}
+
 // CMovieStreamLetter::Execute @107fab0, CScaleformHub::ProcessRequests @107de10 decomp
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dv2r_load(path: *const c_char) -> *mut Def {
@@ -89,6 +97,7 @@ pub unsafe extern "C" fn dv2r_free(d: *mut Def) {
 
 fn build(
     def: &Def,
+    descriptors: &Arc<Descriptors>,
     width: u32,
     height: u32,
     renderer: Box<dyn ruffle_render::backend::RenderBackend>,
@@ -112,7 +121,7 @@ fn build(
         .build();
     player.lock().unwrap().set_window_mode("transparent");
     player.lock().unwrap().enable_gfx_view();
-    fonts::install(&mut player.lock().unwrap());
+    fonts::install(&mut player.lock().unwrap(), descriptors);
     Box::into_raw(Box::new(Movie {
         player,
         desktop_aspect: f32::from_bits(DESKTOP_ASPECT.load(Ordering::Relaxed)),
@@ -134,17 +143,22 @@ pub unsafe extern "C" fn dv2r_open_on_unity(def: *const Def) -> *mut Movie {
     let Some(descriptors) = unity::gpu() else {
         return std::ptr::null_mut();
     };
-    let Ok(mut renderer) = WgpuRenderBackend::new(descriptors.clone(), unity::UnityTarget { width: 1, height: 1, built: Mutex::new(None) }) else {
+    let target = unity::UnityTarget { width: 1, height: 1, built: Mutex::new(None) };
+    open_shared(def, descriptors, target)
+}
+
+pub fn open_shared<T: RenderTarget>(def: &Def, descriptors: Arc<Descriptors>, target: T) -> *mut Movie {
+    let Ok(mut renderer) = WgpuRenderBackend::new(descriptors.clone(), target) else {
         return std::ptr::null_mut();
     };
     // CGFxPlayStreamManager::Initialize @10810d0 decomp
     renderer.disable_msaa();
     // CGFxPlayStreamManager::Initialize @10810d0 decomp
     renderer.set_shared_texture_pool(POOL.get_or_init(Default::default).clone());
-    renderer.set_external_images(Arc::new(images::Images(descriptors, Default::default())));
+    renderer.set_external_images(Arc::new(images::Images(descriptors.clone(), Default::default())));
     // CGFxPlayStream::Notifyloaded @107e6c0, GFxMovieDefImpl::CreateInstance @ec7fe0 decomp
     let (width, height) = (def.movie.width().to_pixels() as u32, def.movie.height().to_pixels() as u32);
-    build(def, width, height, Box::new(renderer))
+    build(def, &descriptors, width, height, Box::new(renderer))
 }
 
 unsafe fn text(p: *const c_char) -> String {
@@ -175,16 +189,29 @@ pub unsafe extern "C" fn dv2r_open(path: *const c_char, width: u32, height: u32)
     let Ok(mut renderer) = WgpuRenderBackend::new(descriptors.clone(), target) else {
         return std::ptr::null_mut();
     };
-    renderer.set_external_images(Arc::new(images::Images(descriptors, Default::default())));
-    build(&def, width, height, Box::new(renderer))
+    renderer.set_external_images(Arc::new(images::Images(descriptors.clone(), Default::default())));
+    build(&def, &descriptors, width, height, Box::new(renderer))
 }
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn dv2r_close(m: *mut Movie) {
     if !m.is_null() {
         drop(unsafe { Box::from_raw(m) });
+        release_heap();
     }
 }
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn release_heap() {
+    unsafe extern "C" {
+        fn malloc_trim(pad: usize) -> i32;
+    }
+    // malloc_trim(3) man page
+    unsafe { malloc_trim(0) };
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn release_heap() {}
 
 // CGFxPlayStreamManager::SetDesktopAspectRatio @495200, CGFxPlayStreamManager::CreatePlayStream @1081430 decomp
 #[unsafe(no_mangle)]
